@@ -7,7 +7,10 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/xkvm/xkvm/internal/artifact"
+	"github.com/xkvm/xkvm/internal/ipa"
 	"github.com/xkvm/xkvm/internal/log"
+	"github.com/xkvm/xkvm/internal/macho"
 	"github.com/xkvm/xkvm/internal/testutil"
 )
 
@@ -159,6 +162,183 @@ func TestExtractArtifactsRejectsBadInput(t *testing.T) {
 	}
 	if err := ExtractArtifacts("/nonexistent.ipa", t.TempDir()); err == nil {
 		t.Fatal("expected an error for a nonexistent input")
+	}
+}
+
+func TestExtractArtifactsWritesManifest(t *testing.T) {
+	log.SetSilent(true)
+	t.Cleanup(func() { log.SetSilent(false) })
+
+	in := zipApp(t, map[string]string{
+		"Payload/Test.app/Regram.dylib":                   "rootdylib",
+		"Payload/Test.app/Frameworks/Sparkle.dylib":       "fwdylib",
+		"Payload/Test.app/Sparkle.bundle/Contents/info":   "bundle",
+		"Payload/Test.app/PlugIns/OpenInRegram.appex/exe": "appex",
+	})
+	outDir := filepath.Join(t.TempDir(), "out")
+	if err := ExtractArtifacts(in, outDir); err != nil {
+		t.Fatalf("ExtractArtifacts() error = %v", err)
+	}
+	m, err := artifact.ReadManifest(filepath.Join(outDir, manifestName))
+	if err != nil {
+		t.Fatalf("manifest missing: %v", err)
+	}
+	got := map[string]artifact.Placement{}
+	for _, e := range m.Artifacts {
+		got[e.Name] = e.Placement
+	}
+	want := map[string]artifact.Placement{
+		"Regram.dylib":       artifact.PlacementRoot,
+		"Sparkle.dylib":      artifact.PlacementFrameworks,
+		"Sparkle.bundle":     artifact.PlacementRoot,
+		"OpenInRegram.appex": artifact.PlacementPlugins,
+	}
+	for name, wantPlacement := range want {
+		if got[name] != wantPlacement {
+			t.Errorf("placement of %q = %q, want %q", name, got[name], wantPlacement)
+		}
+	}
+	if m.Source != in {
+		t.Errorf("manifest source = %q, want %q", m.Source, in)
+	}
+}
+
+func TestRootDylibsFromManifests(t *testing.T) {
+	tmp := t.TempDir()
+	// An extraction dir with a manifest marking RootLib as app-root and
+	// FrameLib as frameworks.
+	extractDir := filepath.Join(tmp, "extract")
+	if err := os.MkdirAll(extractDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	m := &artifact.Manifest{
+		Format: 1,
+		Artifacts: []artifact.ManifestEntry{
+			{Name: "RootLib.dylib", Kind: "dylib", Placement: artifact.PlacementRoot},
+			{Name: "FrameLib.dylib", Kind: "dylib", Placement: artifact.PlacementFrameworks},
+			{Name: "Assets.bundle", Kind: "bundle", Placement: artifact.PlacementRoot},
+		},
+	}
+	if err := artifact.WriteManifest(filepath.Join(extractDir, manifestName), m); err != nil {
+		t.Fatal(err)
+	}
+
+	roots, err := rootDylibsFromManifests([]string{
+		filepath.Join(extractDir, "RootLib.dylib"),
+		filepath.Join(extractDir, "FrameLib.dylib"),
+	})
+	if err != nil {
+		t.Fatalf("rootDylibsFromManifests: %v", err)
+	}
+	if len(roots) != 1 || roots[0] != "RootLib.dylib" {
+		t.Fatalf("roots = %v, want [RootLib.dylib]", roots)
+	}
+
+	// A dylib with no manifest anywhere above it yields nothing.
+	noManifest := filepath.Join(t.TempDir(), "plain.dylib")
+	if err := os.WriteFile(noManifest, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if roots, err := rootDylibsFromManifests([]string{noManifest}); err != nil || len(roots) != 0 {
+		t.Fatalf("no-manifest dir: roots = %v, err = %v, want empty", roots, err)
+	}
+
+	// A corrupt manifest must not abort; it just yields nothing.
+	corrupt := filepath.Join(tmp, "corrupt")
+	if err := os.MkdirAll(corrupt, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(corrupt, manifestName), []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if roots, err := rootDylibsFromManifests([]string{filepath.Join(corrupt, "X.dylib")}); err != nil || len(roots) != 0 {
+		t.Fatalf("corrupt manifest: roots = %v, err = %v, want empty/nil", roots, err)
+	}
+}
+
+// TestExtractReinjectHonorsPlacement is the money test: extract a fixture app
+// that ships a root dylib (Regram-style) plus a Frameworks dylib, then
+// re-inject from the extraction dir with no --root-dylib flag and confirm the
+// @executable_path contract is restored automatically.
+func TestExtractReinjectHonorsPlacement(t *testing.T) {
+	testutil.SkipUnlessNativeToolchain(t)
+	log.SetSilent(true)
+	t.Cleanup(func() { log.SetSilent(false) })
+	tmp := t.TempDir()
+
+	// Fixture app: RootLib.dylib at the app root, FrameLib.dylib in
+	// Frameworks/.
+	appDir := testutil.MakeApp(t, tmp, "TestApp", "com.example.test")
+	rootLib := testutil.MakeTweak(t, filepath.Join(tmp, "build"), "RootLib")
+	frameLib := testutil.MakeTweak(t, filepath.Join(tmp, "build"), "FrameLib")
+	if err := os.Rename(rootLib, filepath.Join(appDir, "RootLib.dylib")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(appDir, "Frameworks"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(frameLib, filepath.Join(appDir, "Frameworks", "FrameLib.dylib")); err != nil {
+		t.Fatal(err)
+	}
+	srcIPA := filepath.Join(tmp, "src.ipa")
+	testutil.MakeIPA(t, appDir, srcIPA)
+
+	// 1. extract — manifest must record both placements.
+	extractDir := filepath.Join(tmp, "extract")
+	if err := ExtractArtifacts(srcIPA, extractDir); err != nil {
+		t.Fatalf("ExtractArtifacts: %v", err)
+	}
+	m, err := artifact.ReadManifest(filepath.Join(extractDir, manifestName))
+	if err != nil {
+		t.Fatalf("manifest missing after extract: %v", err)
+	}
+	placements := map[string]artifact.Placement{}
+	for _, e := range m.Artifacts {
+		placements[e.Name] = e.Placement
+	}
+	if placements["RootLib.dylib"] != artifact.PlacementRoot || placements["FrameLib.dylib"] != artifact.PlacementFrameworks {
+		t.Fatalf("manifest placements = %v", placements)
+	}
+
+	// 2. fresh base app, re-inject with -f pointing into the extract dir.
+	baseDir := testutil.MakeApp(t, tmp, "BaseApp", "com.example.base")
+	baseIPA := filepath.Join(tmp, "base.ipa")
+	testutil.MakeIPA(t, baseDir, baseIPA)
+	out := filepath.Join(tmp, "out.ipa")
+	o := &Options{
+		Input:    baseIPA,
+		Output:   out,
+		Files:    []string{filepath.Join(extractDir, "RootLib.dylib"), filepath.Join(extractDir, "FrameLib.dylib")},
+		Fakesign: true,
+	}
+	if err := Run(context.Background(), o); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	// 3. the output main binary must load RootLib via @executable_path and
+	// FrameLib via @rpath — placement restored with no explicit flag.
+	outApp, err := ipa.Extract(out, t.TempDir())
+	if err != nil {
+		t.Fatalf("extracting output ipa: %v", err)
+	}
+	deps, err := (macho.Bin{Path: filepath.Join(outApp, "BaseApp")}).Dependencies()
+	if err != nil {
+		t.Fatalf("reading output deps: %v", err)
+	}
+	hasRoot, hasFrame := false, false
+	for _, d := range deps {
+		if d == "@executable_path/RootLib.dylib" {
+			hasRoot = true
+		}
+		if d == "@rpath/FrameLib.dylib" {
+			hasFrame = true
+		}
+	}
+	if !hasRoot {
+		t.Errorf("output deps missing @executable_path/RootLib.dylib: %v", deps)
+	}
+	if !hasFrame {
+		t.Errorf("output deps missing @rpath/FrameLib.dylib: %v", deps)
 	}
 }
 

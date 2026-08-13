@@ -95,6 +95,12 @@ type Injector struct {
 	MainBin macho.Bin
 	tmpdir  string
 	Mode    Mode // hooking runtime mode (default ModeSubstrate)
+	// RootDylibs maps basenames of dylibs that must land in the app root
+	// (not Frameworks/) with an @executable_path load command instead of
+	// @rpath. Some dlopen-based tweaks (e.g. Regram) resolve their own
+	// resources relative to @executable_path and crash when relocated to
+	// Frameworks — the RC mod that ships them loads them from the app root.
+	RootDylibs map[string]bool
 }
 
 // New returns an Injector for the app at appDir whose main executable is
@@ -112,6 +118,18 @@ func New(appDir, mainExec, tmpdir string) *Injector {
 
 // SetMode selects the hooking runtime mode for this injection run.
 func (in *Injector) SetMode(m Mode) { in.Mode = m }
+
+// SetRootDylibs marks the given dylib paths as app-root-placed: they land in
+// the *.app root (not Frameworks/) with an @executable_path/{name} load
+// command. Basenames are stored; the paths are used only for identity.
+func (in *Injector) SetRootDylibs(paths []string) {
+	for _, p := range paths {
+		if in.RootDylibs == nil {
+			in.RootDylibs = map[string]bool{}
+		}
+		in.RootDylibs[filepath.Base(p)] = true
+	}
+}
 
 // Inject processes the given tweak paths (.deb, .dylib, .framework, .appex,
 // or other files/dirs to copy to the app root).
@@ -173,6 +191,12 @@ func (in *Injector) Inject(tweaks []string) error {
 		case strings.HasSuffix(it, ".appex"):
 			hasPlugins = true
 		case strings.HasSuffix(it, ".dylib"), strings.HasSuffix(it, ".framework"):
+			// Root-placed dylibs live in the app root, so they must not
+			// force a Frameworks/ dir or the @executable_path/Frameworks
+			// rpath — that rpath is what lets @rpath loads resolve.
+			if strings.HasSuffix(it, ".dylib") && in.RootDylibs[filepath.Base(it)] {
+				continue
+			}
 			hasFrameworks = true
 		}
 	}
@@ -205,6 +229,12 @@ func (in *Injector) Inject(tweaks []string) error {
 				return err
 			}
 		case strings.HasSuffix(it, ".dylib"):
+			if in.RootDylibs[filepath.Base(it)] {
+				if err := in.injectDylibRoot(it, needed, injectedNames); err != nil {
+					return err
+				}
+				continue
+			}
 			if err := in.injectDylib(it, needed, injectedNames); err != nil {
 				return err
 			}
@@ -264,7 +294,7 @@ func (in *Injector) injectDylib(path string, needed map[string]bool, injectedNam
 	if err := fixCommonDeps(e, needed, &in.Mode); err != nil {
 		return err
 	}
-	if err := fixInjectedDeps(e, injectedNames); err != nil {
+	if err := fixInjectedDeps(e, injectedNames, in.RootDylibs); err != nil {
 		return err
 	}
 	if err := in.MainBin.InjectWeak("@rpath/" + bn); err != nil {
@@ -278,6 +308,40 @@ func (in *Injector) injectDylib(path string, needed map[string]bool, injectedNam
 		return err
 	}
 	log.Infof("injected %s (dylib)", bn)
+	return nil
+}
+
+// injectDylibRoot stages a dylib to the app root and injects an
+// @executable_path/{name} weak load command on the main binary — the load
+// contract dlopen-based tweaks (e.g. Regram, whose install name is
+// /Library/MobileSubstrate/DynamicLibraries/Regram.dylib and whose resources
+// resolve relative to @executable_path) require. This is the opposite of
+// injectDylib's Frameworks/@rpath contract and is selected per-file via
+// SetRootDylibs.
+func (in *Injector) injectDylibRoot(path string, needed map[string]bool, injectedNames []string) error {
+	bn := filepath.Base(path)
+	stage := filepath.Join(in.tmpdir, bn)
+	if err := copyFile(path, stage); err != nil {
+		return err
+	}
+	e := macho.Bin{Path: stage}
+	if err := fixCommonDeps(e, needed, &in.Mode); err != nil {
+		return err
+	}
+	if err := fixInjectedDeps(e, injectedNames, in.RootDylibs); err != nil {
+		return err
+	}
+	if err := in.MainBin.InjectWeak("@executable_path/" + bn); err != nil {
+		return fmt.Errorf("injecting %s: %w", bn, err)
+	}
+	final := filepath.Join(in.AppDir, bn)
+	if err := os.Remove(final); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if err := os.Rename(stage, final); err != nil {
+		return err
+	}
+	log.Infof("injected %s (dylib, app root)", bn)
 	return nil
 }
 
@@ -399,8 +463,11 @@ func fixCommonDeps(e macho.Bin, needed map[string]bool, mode *Mode) error {
 }
 
 // fixInjectedDeps rewrites dependencies that reference other injected tweaks
-// to their @rpath install locations, mirroring cyan's fix_dependencies.
-func fixInjectedDeps(e macho.Bin, names []string) error {
+// to their install locations, mirroring cyan's fix_dependencies. Frameworks/
+// dylibs get @rpath; app-root dylibs (rootNames) get @executable_path — the
+// same contract their loader uses, so a tweak depending on a root-placed
+// dylib resolves it where it actually landed.
+func fixInjectedDeps(e macho.Bin, names []string, rootNames map[string]bool) error {
 	deps, err := e.Dependencies()
 	if err != nil {
 		return err
@@ -413,6 +480,8 @@ func fixInjectedDeps(e macho.Bin, names []string) error {
 			var npath string
 			if strings.HasSuffix(cname, ".framework") {
 				npath = "@rpath/" + cname + "/" + strings.TrimSuffix(cname, ".framework")
+			} else if rootNames[cname] {
+				npath = "@executable_path/" + cname
 			} else {
 				npath = "@rpath/" + cname
 			}

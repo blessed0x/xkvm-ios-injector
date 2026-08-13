@@ -3,11 +3,14 @@ package cli
 import (
 	"bytes"
 	"context"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/xkvm/xkvm/internal/app"
+	"github.com/xkvm/xkvm/internal/cyanfile"
 )
 
 // runCapturesOptions returns a Runner that records the parsed options.
@@ -180,7 +183,7 @@ func TestExtractCmd(t *testing.T) {
 	}
 }
 
-func TestCGenStub(t *testing.T) {
+func TestCGenRequiresOutput(t *testing.T) {
 	cmd := NewRootCmd(func(_ context.Context, _ *app.Options) error { return nil })
 	var out bytes.Buffer
 	cmd.SetOut(&out)
@@ -188,7 +191,40 @@ func TestCGenStub(t *testing.T) {
 	cmd.SetArgs([]string{"cgen"})
 
 	if err := cmd.Execute(); err == nil {
-		t.Fatal("expected cgen stub to error")
+		t.Fatal("expected cgen without -o to error")
+	}
+}
+
+// TestCGenGeneratesRootDylibConfig exercises cgen end to end: it must write a
+// .cyan archive whose config.json carries root_dylibs and whose inject/ holds
+// the payloads. This is the round-trip guarantee behind configs that mark
+// root dylibs.
+func TestCGenGeneratesRootDylibConfig(t *testing.T) {
+	tmp := t.TempDir()
+	tweak := filepath.Join(tmp, "Regram.dylib")
+	if err := os.WriteFile(tweak, []byte("fake-dylib"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(tmp, "patch.cyan")
+
+	cmd := NewRootCmd(func(_ context.Context, _ *app.Options) error { return nil })
+	cmd.SetArgs([]string{"cgen", "-o", out, "-f", tweak, "--root-dylib", tweak, "-n", "App", "-s"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("cgen: %v", err)
+	}
+
+	if _, err := os.Stat(out); err != nil {
+		t.Fatalf("cgen output missing: %v", err)
+	}
+	cfg, err := cyanfile.Parse(out, filepath.Join(tmp, "parsed"))
+	if err != nil {
+		t.Fatalf("parsing generated config: %v", err)
+	}
+	if len(cfg.RootDylibs) != 1 || filepath.Base(cfg.RootDylibs[0]) != "Regram.dylib" {
+		t.Errorf("RootDylibs = %v, want [Regram.dylib]", cfg.RootDylibs)
+	}
+	if cfg.Name != "App" || !cfg.Fakesign {
+		t.Errorf("baked scalars wrong: name=%q fakesign=%v", cfg.Name, cfg.Fakesign)
 	}
 }
 

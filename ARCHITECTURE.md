@@ -49,6 +49,26 @@ runs natively on any GOOS/GOARCH — no external or embedded tooling.
 | Deb | `tbhutils.extract_deb` | `ar -x` + `tar -xf data.*`; collects dylib/appex/bundle/framework |
 | Executable | `tbhtypes/executable.py` | `otool -L` deps; `install_name_tool -change`; **common-dependency fixing** (substrate→ElleKit `@rpath/CydiaSubstrate.framework/CydiaSubstrate`, Orion, Cephei*); `ldid -R/-S -M`; `lipo -thin arm64` |
 | Inject | `tbhtypes/main_executable.py` | write entitlements (`ldid -e`), strip sig, add `@executable_path/Frameworks` rpath, per-type inject (appex→PlugIns, dylib/framework→Frameworks, other→app root), **auto-inject missing hooking frameworks from extras/**, sign `-S <ents> -M -Cadhoc -Q zero.requirements` |
+
+**xkvm-native extension: root-placed dylibs (`--root-dylib`).** cyan always ships every
+`.dylib` into `Frameworks/` with an `@rpath` load command. Some dlopen-based tweaks — the
+licensing/registration dylib of Regram-family mods is the canonical case — resolve their own
+resources relative to `@executable_path` and crash when relocated (the mod that ships them
+loads them from the app root with an `@executable_path/{name}` weak load). `--root-dylib`
+selects that contract per file: placement in the app root, `@executable_path/{name}` load on
+the main binary, and `fixInjectedDeps` rewrites other tweaks' references to it as
+`@executable_path/{name}` (never `@rpath`). A root-only run never creates `Frameworks/` nor
+adds the `@executable_path/Frameworks` rpath. Regression-pinned in
+`internal/inject/inject_test.go` (`TestInjectRootDylibUsesExecutablePath` et al.).
+
+**Extraction placement memory (`xkvm extract`, xkvm-native).** `xkvm extract` writes a
+`xkvm-manifest.json` sidecar next to the extracted artifacts recording each artifact's
+original placement in the source bundle (`root` / `frameworks` / `plugins` / `other`, plus a
+kind). Re-injection auto-restores it: when a `-f` dylib lives under a directory with a
+manifest, a dylib recorded as `root` is re-rooted with its `@executable_path` contract
+without any `--root-dylib` flag — the Regram extract→re-inject round-trip is automatic.
+Frameworks/plugins/other placements need no action (the injector already sends those to
+their canonical locations by default). Explicit `--root-dylib` entries merge in.
 | Plist | `tbhtypes/plist.py` | name (incl. `.lproj` localized strings), version, bundle id (incl. appex rewrite), minOS, UISupportedDevices, documents, merge plist |
 | AppBundle | `tbhtypes/app_bundle.py` | watch apps, extensions (all/encrypted), icon via Pillow (120/152px + CFBundleIcons), mass fakesign/thin |
 | Config | `cgen/__main__.py`, `tbhutils.parse_cyans` | `.cyan` = zip with `config.json` + `inject/` payloads |
@@ -173,6 +193,9 @@ Azule's `-m`=skip-hooking collides with cyan's `-m`=minOS; both resolved in cyan
 | `-o, --output` | output; default overwrite input | ✔ |
 | `-z, --cyan` | `.cyan` config file(s) | ✔ |
 | `-f` | tweak/item(s) to inject | ✔ (+ accept **repo package id** when `--fetch` used) |
+| `--root-dylib` (new) | inject dylib(s) to the **app root** with an `@executable_path` load command instead of Frameworks/`@rpath` — for dlopen-based tweaks (e.g. Regram) that resolve resources relative to `@executable_path` and crash when relocated to Frameworks; use together with `-f <same file>` to also carry the file into the injection set | ✔ |
+| `xkvm cgen -o out.cyan` (new, implemented) | generate a shareable `.cyan` config (`-f` payloads → `inject/`, `--root-dylib` marks app-root payloads, `-n`/`-s`/`--ellekit`/`--patch` baked) — upstream pyzule-rw cgen parity + the xkvm `root_dylibs` key | ✔ |
+| `xkvm extract -i <app> -o <dir>` (new, implemented) | dump tweak artifacts (dylibs/frameworks/bundles/appex) from an app/ipa/tipa **and write `xkvm-manifest.json`** recording each artifact's original placement; re-injecting those files honors it automatically (§5.3) | ✔ |
 | `-n -v -b -m` | name / version / bundle id / minOS | ✔ |
 | `-k` | icon | ✔ (Go image, drops Pillow) |
 | `-l` | plist merge | ✔ |
@@ -189,7 +212,67 @@ Azule's `-m`=skip-hooking collides with cyan's `-m`=minOS; both resolved in cyan
 | `--decrypt <email> <pass>` (new) | iOS-only App Store decrypt | M5 |
 | `--country, -C` (new) | country code for ipatool/iTunes lookup | M5 |
 
-### 5.1 Compatibility-patch registry (xkvm-native extension point)
+### 5.1 `.cyan` config format (confirmed from upstream + `root_dylibs` extension)
+
+`.cyan` is a zip with `config.json` + payloads — the exact upstream pyzule-rw shape:
+
+- `config.json` is a **flat dict of flag values**; file-valued flags (`-f/-k/-l/-x`) are stored
+  as `true` and their payload files ship in the archive (`inject/`, `icon.idk`, `merge.plist`,
+  `new.entitlements`).
+- **Merge semantics (upstream `parse_cyans`, confirmed):** `inject/` payloads **append** to the
+  `-f` file set (basename-dedup resolves collisions in the config's favor — config wins);
+  `icon.idk`/`merge.plist`/`new.entitlements` are extracted by key; **every remaining key
+  overrides the corresponding CLI arg** (`args[k] = v`).
+- **xkvm extension: `root_dylibs`** — an array of `inject/` payload basenames that must be
+  placed in the **app root** with an `@executable_path` load command (the `--root-dylib`
+  contract). Values are basenames, matching how `inject/` payloads are referenced; a basename
+  with no matching payload is a config error.
+- Unknown keys are ignored (forward compatibility: a config from a newer xkvm still applies
+  the keys this version knows). Zip-slip payload paths are rejected.
+- Configs are applied in `-z` order; later configs win over earlier ones for scalar keys.
+
+Implemented in `internal/cyanfile` (`Parse`/`Generate`), consumed by `app.Run` **before**
+`validate()` (payloads must be materialized before the file-existence gate) and by
+`xkvm cgen` (implemented — replaces the M4 stub). Round-trip-pinned in
+`internal/cyanfile/cyanfile_test.go` and `TestCGenGeneratesRootDylibConfig`.
+
+### 5.2 Extraction placement memory (`xkvm extract`)
+
+`xkvm extract` copies every injectable artifact (dylib/framework/bundle/appex) out of an
+app/ipa/tipa and writes `xkvm-manifest.json` next to them:
+
+```json
+{
+  "format": 1,
+  "source": "in.ipa",
+  "artifacts": [
+    { "name": "Regram.dylib",              "kind": "dylib",     "placement": "root" },
+    { "name": "Sparkle.dylib",             "kind": "dylib",     "placement": "frameworks" },
+    { "name": "Sparkle.bundle",            "kind": "bundle",    "placement": "root" },
+    { "name": "OpenInRegramExtension.appex", "kind": "appex",  "placement": "plugins" }
+  ]
+}
+```
+
+- **Placement** is decided by the artifact's path relative to the bundle: first-component
+  `Frameworks/` → `frameworks`, `PlugIns/` → `plugins`, a top-level entry → `root`, else
+  `other`.
+- **Re-injection auto-honors it** (`app.Run` → `rootDylibsFromManifests`): each `-f` `.dylib`
+  walks up (≤4 ancestor levels, cached) to the nearest `xkvm-manifest.json`; a dylib recorded
+  as `root` is added to `RootDylibs` automatically — the `@executable_path` contract is
+  restored with zero flags. A corrupt/unreadable manifest logs a warning and falls back to
+  default placement; it never aborts the injection.
+- **Design note:** the manifest only needs to *remember root dylibs* — frameworks/bundles/
+  appex already re-inject to their canonical places by default. The `root` flag is the one
+  placement the injector would otherwise destroy, and it's exactly the Regram-class crash
+  this prevents.
+
+Implemented in `internal/artifact/manifest.go` (types + read/write) and
+`internal/app/run.go` (`ExtractArtifacts` writes; `rootDylibsFromManifests` reads).
+Pinned by `TestExtractReinjectHonorsPlacement` (full extract → re-inject round-trip on real
+Mach-O fixtures: `@executable_path` restored with no `--root-dylib`).
+
+### 5.3 Compatibility-patch registry (xkvm-native extension point)
 
 Compatibility patches are Feather-style toggles that mutate an extracted app
 bundle (`*.app`) before signing. They are **xkvm-native** (not ported from
@@ -257,7 +340,9 @@ remove extensions (all | encrypted only)
   ├─ extract .debs                          (ar + data.tar.*, collect dylib/framework/appex/bundle)
   ├─ fix common dependencies (substrate→ElleKit, orion, cephei*)
   ├─ auto-inject missing hooking frameworks from extras/
-  └─ inject dylib/framework → Frameworks, appex → PlugIns, other → app root
+  └─ inject dylib/framework → Frameworks (unless marked `--root-dylib` **or recorded as app-root in an extraction manifest** → app root + `@executable_path`), appex → PlugIns, other → app root
+parse .cyan config(s) → merge into args (inject/ + root_dylibs payloads, icon/plist/ents, scalar overrides)
+extract command (optional): dump artifacts + write xkvm-manifest.json (placement memory — §5.2)
 apply plist ops (name/version/bundleid/minOS/merge/uisd/documents)
 apply compatibility patches (internal/patch registry — §5.1; after plist ops, before fakesign)
 change icon                                 (120/152px + CFBundleIcons)
@@ -276,6 +361,12 @@ repack .ipa (compression level, exclude hidden files) | emit .app
   **mandatory test cases**); `.cyan` parse/generate round-trip.
 - **Mach-O (pure-Go migration):** fixture Mach-Os built by tests + committed testdata binaries;
   assert load-command sets after inject/change/sign/thin via go-macho parse.
+- **Placement memory:** manifest round-trip + placement/kind mapping
+  (`internal/artifact/manifest_test.go`); extract writes correct placements
+  (`TestExtractArtifactsWritesManifest`); auto-detect honors root dylibs from a manifest and
+  ignores frameworks/absent/corrupt manifests (`TestRootDylibsFromManifests`); the full
+  extract → re-inject round-trip restores `@executable_path` with no flag
+  (`TestExtractReinjectHonorsPlacement`, native-toolchain-gated).
 - **E2E golden tests:** small committed fixture IPA → run pipeline → assert (a) zip structure,
   (b) injected load command present, (c) Info.plist keys, (d) code signature parses.
 - **Differential harness (highest-value):** run the *same* input through cyan (reference) and

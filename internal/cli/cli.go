@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/xkvm/xkvm/internal/app"
+	"github.com/xkvm/xkvm/internal/cyanfile"
 	"github.com/xkvm/xkvm/internal/log"
 	"github.com/xkvm/xkvm/internal/patch"
 )
@@ -80,6 +81,7 @@ the -i input; the result is written to -o, or overwrites the input.`,
 	f.StringVarP(&opts.Output, "output", "o", "", "output path (.app/.ipa/.tipa); defaults to overwriting the input")
 	f.StringArrayVarP(&opts.Cyans, "cyan", "z", nil, ".cyan config file(s) to use (repeatable; values may be space-separated)")
 	f.StringArrayVarP(&opts.Files, "file", "f", nil, "tweak to inject / item to add to the bundle (repeatable; values may be space-separated)")
+	f.StringArrayVar(&opts.RootDylibs, "root-dylib", nil, "inject dylib to the app root with an @executable_path load command instead of Frameworks/@rpath — for dlopen-based tweaks like Regram that resolve resources relative to @executable_path (repeatable)")
 	f.StringVarP(&opts.Name, "name", "n", "", "modify the app's name")
 	f.StringVarP(&opts.Version, "app-version", "v", "", "modify the app's version")
 	f.StringVarP(&opts.BundleID, "bundle-id", "b", "", "modify the app's bundle id")
@@ -177,15 +179,49 @@ func newExtractCmd() *cobra.Command {
 	return cmd
 }
 
-// newCGenCmd is the .cyan config generator. Real implementation lands in M4.
+// newCGenCmd is the .cyan config generator (cyan/pyzule-rw cgen parity,
+// plus the xkvm --root-dylib extension).
 func newCGenCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "cgen",
+	var (
+		output     string
+		files      []string
+		rootDylibs []string
+		name       string
+		fakesign   bool
+		ellekit    bool
+		patches    []string
+	)
+	cmd := &cobra.Command{
+		Use:   "cgen -o <out.cyan> [-f tweak ...] [--root-dylib dylib ...]",
 		Short: "generate a shareable .cyan config file",
-		Long:  "cgen generates .cyan config files for reproducible IPA patching.",
-		Args:  cobra.NoArgs,
+		Long: `cgen generates .cyan config files for reproducible IPA patching,
+matching the upstream cyan/pyzule-rw config format (config.json + inject/
+payloads). xkvm extension: --root-dylib marks an inject payload for the
+app-root @executable_path contract (dlopen-based tweaks like Regram).`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return fmt.Errorf("cgen is not implemented yet — lands in Milestone M4")
+			if output == "" {
+				return fmt.Errorf("required flag(s) \"output\" not set")
+			}
+			return cyanfile.Generate(cyanfile.GenerateOptions{
+				Output:     output,
+				Files:      files,
+				RootDylibs: rootDylibs,
+				Name:       name,
+				Fakesign:   fakesign,
+				ElleKit:    ellekit,
+				Patches:    patches,
+			})
 		},
 	}
+	f := cmd.Flags()
+	f.StringVarP(&output, "output", "o", "", "output .cyan file")
+	f.StringArrayVarP(&files, "file", "f", nil, "tweak to inject / item to add (repeatable; payloads ship in inject/)")
+	f.StringArrayVar(&rootDylibs, "root-dylib", nil, "mark an injected dylib for the app root @executable_path contract (must also be in -f; repeatable)")
+	f.StringVarP(&name, "name", "n", "", "app name to bake into the config")
+	f.BoolVarP(&fakesign, "fakesign", "s", false, "bake fakesign into the config")
+	f.BoolVar(&ellekit, "ellekit", false, "bake the ElleKit runtime into the config")
+	f.StringArrayVar(&patches, "patch", nil, "bake compatibility patch name(s) into the config (repeatable)")
+	_ = cmd.MarkFlagRequired("output")
+	return cmd
 }

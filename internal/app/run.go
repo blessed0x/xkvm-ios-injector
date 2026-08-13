@@ -11,6 +11,7 @@ import (
 
 	"github.com/xkvm/xkvm/internal/appbundle"
 	"github.com/xkvm/xkvm/internal/artifact"
+	"github.com/xkvm/xkvm/internal/cyanfile"
 	"github.com/xkvm/xkvm/internal/extras"
 	"github.com/xkvm/xkvm/internal/fetch"
 	"github.com/xkvm/xkvm/internal/inject"
@@ -25,6 +26,22 @@ import (
 // uisd/watch/documents → mass fakesign/thin → output. Azule-heritage
 // fetch/decrypt (M4/M5) are out of scope per the user's narrowing.
 func Run(ctx context.Context, opts *Options) error {
+	// .cyan configs must be parsed BEFORE validate: their inject/ payloads
+	// are materialized into tmpdir and appended to Files, so the existence
+	// checks in validate must see them. Upstream (parse_cyans) runs them
+	// after the encryption check; xkvm runs them first because validate
+	// is xkvm's input gate.
+	tmpdir, err := os.MkdirTemp("", "xkvm-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(tmpdir)
+
+	if len(opts.Cyans) > 0 {
+		if err := mergeCyans(opts, tmpdir); err != nil {
+			return err
+		}
+	}
 	if err := opts.validate(); err != nil {
 		return err
 	}
@@ -42,12 +59,6 @@ func Run(ctx context.Context, opts *Options) error {
 
 	inputIsIPA := strings.HasSuffix(opts.Input, ".ipa") || strings.HasSuffix(opts.Input, ".tipa")
 	outputIsIPA := strings.HasSuffix(opts.Output, ".ipa") || strings.HasSuffix(opts.Output, ".tipa")
-
-	tmpdir, err := os.MkdirTemp("", "xkvm-*")
-	if err != nil {
-		return err
-	}
-	defer os.RemoveAll(tmpdir)
 
 	appDir, err := prepareApp(opts.Input, tmpdir, inputIsIPA)
 	if err != nil {
@@ -126,6 +137,23 @@ func Run(ctx context.Context, opts *Options) error {
 			inj.SetMode(inject.ModeElleKit)
 			log.Infof("using the ElleKit runtime (--ellekit)")
 		}
+		// App-root dylibs (@executable_path contract) are tracked by
+		// basename so the same file can be listed in both -f and
+		// --root-dylib: -f carries it into the injection set, --root-dylib
+		// overrides its placement.
+		//
+		// Auto-restore: if the -f files were produced by `xkvm extract`, the
+		// extraction manifest next to them records each dylib's original
+		// placement. Root-placed dylibs (e.g. Regram) are re-rooted without
+		// any flag; explicit --root-dylib entries still merge in.
+		rootDylibs := opts.RootDylibs
+		if autoRoots, err := rootDylibsFromManifests(files); err != nil {
+			return err
+		} else if len(autoRoots) > 0 {
+			log.Infof("restoring app-root placement from extraction manifest(s): %s", strings.Join(autoRoots, ", "))
+			rootDylibs = append(rootDylibs, autoRoots...)
+		}
+		inj.SetRootDylibs(rootDylibs)
 		if err := inj.Inject(files); err != nil {
 			return err
 		}
@@ -233,9 +261,16 @@ func Run(ctx context.Context, opts *Options) error {
 	return nil
 }
 
+// manifestName is the sidecar `xkvm extract` writes next to the extracted
+// artifacts. Re-injection reads it to restore each artifact's original
+// placement (root vs Frameworks) without a --root-dylib flag.
+const manifestName = "xkvm-manifest.json"
+
 // ExtractArtifacts unpacks an app (ipa/tipa/app) and copies the injectable
 // artifacts (dylibs, frameworks, appex, bundles) it contains into outDir.
-// This is the `xkvm extract` command: dump tweaks from an injected app.
+// This is the `xkvm extract` command: dump tweaks from an injected app. A
+// manifest sidecar (manifestName) is written next to the artifacts recording
+// each one's original placement in the bundle, so re-injection honors it.
 func ExtractArtifacts(input, outDir string) error {
 	ext := strings.ToLower(filepath.Ext(input))
 	isIPA := ext == ".ipa" || ext == ".tipa"
@@ -274,6 +309,7 @@ func ExtractArtifacts(input, outDir string) error {
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return err
 	}
+	manifest := &artifact.Manifest{Format: 1, Source: input}
 	for _, a := range arts {
 		base := filepath.Base(a)
 		dest := filepath.Join(outDir, base)
@@ -286,7 +322,131 @@ func ExtractArtifacts(input, outDir string) error {
 		if err := copyDir(a, dest); err != nil {
 			return err
 		}
-		log.Infof("extracted %s", base)
+		rel, err := filepath.Rel(appDir, a)
+		if err != nil {
+			return err
+		}
+		manifest.Artifacts = append(manifest.Artifacts, artifact.ManifestEntry{
+			Name:      base,
+			Kind:      artifact.KindFor(base),
+			Placement: artifact.PlacementFor(rel),
+		})
+		log.Infof("extracted %s (%s, %s)", base, artifact.KindFor(base), artifact.PlacementFor(rel))
+	}
+	if err := artifact.WriteManifest(filepath.Join(outDir, manifestName), manifest); err != nil {
+		return fmt.Errorf("writing extraction manifest: %w", err)
+	}
+	log.Infof("wrote %s (%d artifact(s), placements remembered)", manifestName, len(manifest.Artifacts))
+	return nil
+}
+
+// rootDylibsFromManifests walks up from each given .dylib file's directory
+// (bounded to manifestMaxDepth ancestor levels) looking for an xkvm
+// extraction manifest, and returns the basenames of dylibs recorded there as
+// app-root-placed. Re-injection uses this to restore the original placement
+// automatically — the @executable_path contract (e.g. Regram) survives
+// extract → re-inject without a --root-dylib flag. Frameworks-placed dylibs
+// and non-dylib artifacts need no action: the injector already sends them to
+// their canonical locations by default.
+const manifestMaxDepth = 4
+
+func rootDylibsFromManifests(files []string) ([]string, error) {
+	cache := map[string]*artifact.Manifest{}
+	var roots []string
+	seen := map[string]bool{}
+	for _, f := range files {
+		if !strings.HasSuffix(f, ".dylib") {
+			continue
+		}
+		bn := filepath.Base(f)
+		dir := filepath.Dir(f)
+		for depth := 0; depth < manifestMaxDepth && dir != "" && dir != "." && dir != string(filepath.Separator); depth++ {
+			m := cache[dir]
+			if m == nil {
+				mp := filepath.Join(dir, manifestName)
+				if _, err := os.Stat(mp); err != nil {
+					dir = filepath.Dir(dir)
+					continue
+				}
+				read, err := artifact.ReadManifest(mp)
+				if err != nil {
+					// A corrupt sidecar must not abort the injection; drop the
+					// auto-restore and let the file land by default placement.
+					log.Warnf("ignoring unreadable extraction manifest %s: %v", mp, err)
+					break
+				}
+				m = read
+				cache[dir] = m
+			}
+			for _, e := range m.Artifacts {
+				if e.Name == bn && e.Placement == artifact.PlacementRoot && !seen[bn] {
+					seen[bn] = true
+					roots = append(roots, bn)
+				}
+			}
+			break
+		}
+	}
+	return roots, nil
+}
+
+// mergeCyans applies each .cyan config to opts, mirroring cyan's
+// parse_cyans: inject/ payloads APPEND to the file set (config wins on
+// basename collision), root_dylibs payloads are appended to RootDylibs, the
+// bundled icon/plist/entitlements are wired, and every remaining scalar key
+// OVERRIDES the corresponding CLI option. Configs are applied in -z order,
+// later configs winning over earlier ones for scalar keys.
+func mergeCyans(opts *Options, tmpdir string) error {
+	for i, c := range opts.Cyans {
+		log.Infof("parsing %s..", filepath.Base(c))
+		outDir := filepath.Join(tmpdir, fmt.Sprintf("cyan-%d", i))
+		cfg, err := cyanfile.Parse(c, outDir)
+		if err != nil {
+			return fmt.Errorf("parsing %s: %w", c, err)
+		}
+
+		// Inject payloads append after the CLI files so the basename-dedup in
+		// validate() resolves collisions in the config's favor (upstream: the
+		// config dict is merged last).
+		opts.Files = append(opts.Files, cfg.Files...)
+		opts.RootDylibs = append(opts.RootDylibs, cfg.RootDylibs...)
+
+		if cfg.Icon != "" {
+			opts.Icon = cfg.Icon
+		}
+		if cfg.PlistMerge != "" {
+			opts.PlistMerge = cfg.PlistMerge
+		}
+		if cfg.Entitlement != "" {
+			opts.Entitlements = cfg.Entitlement
+		}
+		// Remaining scalar keys override the CLI (upstream `args[k] = v`).
+		if cfg.Name != "" {
+			opts.Name = cfg.Name
+		}
+		if cfg.Version != "" {
+			opts.Version = cfg.Version
+		}
+		if cfg.BundleID != "" {
+			opts.BundleID = cfg.BundleID
+		}
+		if cfg.MinimumOS != "" {
+			opts.MinimumOS = cfg.MinimumOS
+		}
+		if cfg.Compress != 0 {
+			opts.Compress = cfg.Compress
+		}
+		opts.Fakesign = opts.Fakesign || cfg.Fakesign
+		opts.Thin = opts.Thin || cfg.Thin
+		opts.ElleKit = opts.ElleKit || cfg.ElleKit
+		opts.RemoveExtensions = opts.RemoveExtensions || cfg.RemoveExts
+		opts.RemoveEncrypted = opts.RemoveEncrypted || cfg.RemoveEnc
+		opts.NoWatch = opts.NoWatch || cfg.NoWatch
+		opts.EnableDocuments = opts.EnableDocuments || cfg.EnableDocs
+		opts.RemoveSupportedDevices = opts.RemoveSupportedDevices || cfg.RemoveDevs
+		opts.IgnoreEncrypted = opts.IgnoreEncrypted || cfg.IgnoreEnc
+		opts.Overwrite = opts.Overwrite || cfg.Overwrite
+		opts.Patches = append(opts.Patches, cfg.Patches...)
 	}
 	return nil
 }

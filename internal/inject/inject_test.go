@@ -261,6 +261,113 @@ func TestInjectMixedSubstrateThenLibhookerOrderIndependent(t *testing.T) {
 	}
 }
 
+// TestInjectRootDylibUsesExecutablePath is the regression test for the
+// Regram-style contract: a dylib marked as root-placed must land in the app
+// root (NOT Frameworks/) and get an @executable_path/{name} load command on
+// the main binary — never @rpath. dlopen-based tweaks (e.g. Regram) resolve
+// their resources relative to @executable_path and crash if relocated to
+// Frameworks with an @rpath load.
+func TestInjectRootDylibUsesExecutablePath(t *testing.T) {
+	testutil.SkipUnlessNativeToolchain(t)
+	tmp := t.TempDir()
+	appDir := testutil.MakeApp(t, tmp, "TestApp", "com.example.test")
+	mainExe := filepath.Join(appDir, "TestApp")
+
+	tweak := testutil.MakeTweak(t, tmp, "RegramStyle")
+
+	inj := New(appDir, mainExe, filepath.Join(tmp, "inject"))
+	inj.SetRootDylibs([]string{tweak})
+	if err := inj.Inject([]string{tweak}); err != nil {
+		t.Fatalf("Inject: %v", err)
+	}
+
+	// 1. The dylib landed in the APP ROOT, not Frameworks/.
+	rootDylib := filepath.Join(appDir, "RegramStyle.dylib")
+	if _, err := os.Stat(rootDylib); err != nil {
+		t.Fatalf("root dylib not at app root: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(appDir, "Frameworks", "RegramStyle.dylib")); err == nil {
+		t.Error("root dylib must NOT also be placed in Frameworks/")
+	}
+
+	// 2. The main binary links it via @executable_path — never @rpath.
+	deps, err := macho.Bin{Path: mainExe}.Dependencies()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !contains(deps, "@executable_path/RegramStyle.dylib") {
+		t.Errorf("main binary missing @executable_path dep, got %v", deps)
+	}
+	if contains(deps, "@rpath/RegramStyle.dylib") {
+		t.Errorf("root dylib must NOT get an @rpath load command, got %v", deps)
+	}
+}
+
+// TestInjectRootDylibNoFrameworksDir verifies that injecting ONLY root-placed
+// dylibs does not create a Frameworks/ directory or add the
+// @executable_path/Frameworks rpath — a root-only run should leave the bundle
+// exactly as if nothing framework-y were injected.
+func TestInjectRootDylibNoFrameworksDir(t *testing.T) {
+	testutil.SkipUnlessNativeToolchain(t)
+	tmp := t.TempDir()
+	appDir := testutil.MakeApp(t, tmp, "TestApp", "com.example.test")
+	mainExe := filepath.Join(appDir, "TestApp")
+
+	tweak := testutil.MakeTweak(t, tmp, "RootOnly")
+	inj := New(appDir, mainExe, filepath.Join(tmp, "inject"))
+	inj.SetRootDylibs([]string{tweak})
+	if err := inj.Inject([]string{tweak}); err != nil {
+		t.Fatalf("Inject: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(appDir, "Frameworks")); !os.IsNotExist(err) {
+		t.Errorf("Frameworks/ must not exist for a root-only injection")
+	}
+}
+
+// TestInjectRootDylibDependencyRewriting verifies that a Frameworks/ tweak
+// depending on a root-placed dylib gets its reference rewritten to
+// @executable_path (where the root dylib actually landed) rather than @rpath
+// — the two contracts must be consistent so dyld can resolve the chain.
+func TestInjectRootDylibDependencyRewriting(t *testing.T) {
+	testutil.SkipUnlessNativeToolchain(t)
+	tmp := t.TempDir()
+	appDir := testutil.MakeApp(t, tmp, "TestApp", "com.example.test")
+	mainExe := filepath.Join(appDir, "TestApp")
+
+	// Root-placed dylib (the "library").
+	lib := testutil.MakeTweak(t, tmp, "RootLib")
+	// Frameworks-placed tweak that depends on the root dylib. The dep path
+	// must NOT contain a common-deps key (substrate/libhooker/...) — those
+	// are rewritten by fixCommonDeps first, which would shadow this test's
+	// fixInjectedDeps assertion.
+	tweak := testutil.MakeTweak(t, tmp, "UsesRootLib")
+	unsigned := macho.Bin{Path: tweak}
+	if err := unsigned.RemoveSignature(); err != nil {
+		t.Fatalf("RemoveSignature: %v", err)
+	}
+	if err := unsigned.InjectWeak("/usr/lib/RootLib.dylib"); err != nil {
+		t.Fatalf("InjectWeak root-lib dep: %v", err)
+	}
+
+	inj := New(appDir, mainExe, filepath.Join(tmp, "inject"))
+	inj.SetRootDylibs([]string{lib})
+	if err := inj.Inject([]string{lib, tweak}); err != nil {
+		t.Fatalf("Inject: %v", err)
+	}
+
+	tweakDeps, err := macho.Bin{Path: filepath.Join(appDir, "Frameworks", "UsesRootLib.dylib")}.Dependencies()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !contains(tweakDeps, "@executable_path/RootLib.dylib") {
+		t.Errorf("dep on root dylib not rewritten to @executable_path, got %v", tweakDeps)
+	}
+	if contains(tweakDeps, "@rpath/RootLib.dylib") {
+		t.Errorf("dep on root dylib must NOT be rewritten to @rpath, got %v", tweakDeps)
+	}
+}
+
 func contains(list []string, s string) bool {
 	for _, v := range list {
 		if v == s {

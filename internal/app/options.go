@@ -21,6 +21,12 @@ type Options struct {
 	Cyans []string
 	Files []string
 
+	// RootDylibs lists dylibs that must land in the app root (not
+	// Frameworks/) with an @executable_path load command instead of @rpath.
+	// dlopen-based tweaks (e.g. Regram) resolve resources relative to
+	// @executable_path and crash when relocated to Frameworks.
+	RootDylibs []string
+
 	Name         string
 	Version      string
 	BundleID     string
@@ -105,6 +111,29 @@ func (o *Options) validate() error {
 		files = append(files, f)
 	}
 	o.Files = files
+
+	// --root-dylib values are plain local .dylib paths, deduped by basename
+	// (last wins, same semantics as -f). Each must exist and be a dylib; a
+	// root-placed non-dylib would silently fall through to the default copy
+	// path, so reject it up front.
+	var roots []string
+	rootsIdx := make(map[string]int)
+	for _, f := range o.RootDylibs {
+		f = strings.TrimSuffix(f, "/")
+		if _, err := os.Stat(f); err != nil {
+			return fmt.Errorf("%q does not exist", f)
+		}
+		if !strings.HasSuffix(f, ".dylib") {
+			return fmt.Errorf("--root-dylib %q is not a .dylib", f)
+		}
+		if idx, ok := rootsIdx[filepath.Base(f)]; ok {
+			roots[idx] = f // overwrite: last wins
+			continue
+		}
+		rootsIdx[filepath.Base(f)] = len(roots)
+		roots = append(roots, f)
+	}
+	o.RootDylibs = roots
 	for _, c := range o.Cyans {
 		if !isRegularFile(c) {
 			return fmt.Errorf("%s does not exist", c)
