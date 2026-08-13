@@ -159,6 +159,25 @@ func Run(ctx context.Context, opts *Options) error {
 		}
 	}
 
+	// Merge-completeness check (the ffmpegkit-gap detector): after any
+	// injection, scan bundle-relative load-command dependencies against the
+	// bundle's Frameworks//root inventory and warn on anything a referenced
+	// framework/dylib that isn't shipped — a tweak whose @rpath dependency is
+	// missing will crash at runtime (or when its dlopen'd feature opens).
+	// Warnings only: the standalone `xkvm check` command is the hard gate.
+	if len(files) > 0 {
+		missing, err := bundle.CheckReferences()
+		if err != nil {
+			return err
+		}
+		for _, m := range missing {
+			log.Warnf("%s references %s, which is not in the app bundle", m.From, m.Dep)
+		}
+		if len(missing) > 0 {
+			log.Warnf("%d unresolved bundle-relative dependenc(ies); run \"xkvm check\" for details", len(missing))
+		}
+	}
+
 	if opts.Name != "" {
 		if err := bundle.ChangeName(opts.Name); err != nil {
 			return err
@@ -338,6 +357,61 @@ func ExtractArtifacts(input, outDir string) error {
 	}
 	log.Infof("wrote %s (%d artifact(s), placements remembered)", manifestName, len(manifest.Artifacts))
 	return nil
+}
+
+// CheckBundle is the `xkvm check` entry point: opens an app/ipa and reports
+// every bundle-relative load-command dependency whose target is missing from
+// the bundle (the merge-completeness / ffmpegkit-gap check). Returns an error
+// when any reference is unresolved so the command can exit non-zero.
+func CheckBundle(input string) error {
+	bundle, cleanup, err := openAnyBundle(input)
+	if err != nil {
+		return err
+	}
+	if cleanup != nil {
+		defer cleanup()
+	}
+	missing, err := bundle.CheckReferences()
+	if err != nil {
+		return err
+	}
+	if len(missing) == 0 {
+		log.Infof("check %s: all bundle-relative dependencies resolve", filepath.Base(input))
+		return nil
+	}
+	for _, m := range missing {
+		log.Errorf("%s references %s, which is not in the app bundle", m.From, m.Dep)
+	}
+	return fmt.Errorf("check %s: %d unresolved bundle-relative dependenc(ies)", filepath.Base(input), len(missing))
+}
+
+// openAnyBundle opens an .app directory (directly) or an .ipa/.tipa
+// (extracted to a temp dir; the returned cleanup removes it).
+func openAnyBundle(input string) (*appbundle.Bundle, func(), error) {
+	ext := strings.ToLower(filepath.Ext(input))
+	switch ext {
+	case ".app":
+		b, err := appbundle.Open(input)
+		return b, nil, err
+	case ".ipa", ".tipa":
+		tmpdir, err := os.MkdirTemp("", "xkvm-check-*")
+		if err != nil {
+			return nil, nil, err
+		}
+		appDir, err := ipa.Extract(input, tmpdir)
+		if err != nil {
+			os.RemoveAll(tmpdir)
+			return nil, nil, err
+		}
+		b, err := appbundle.Open(appDir)
+		if err != nil {
+			os.RemoveAll(tmpdir)
+			return nil, nil, err
+		}
+		return b, func() { os.RemoveAll(tmpdir) }, nil
+	default:
+		return nil, nil, fmt.Errorf("the input must be an app/ipa/tipa")
+	}
 }
 
 // rootDylibsFromManifests walks up from each given .dylib file's directory

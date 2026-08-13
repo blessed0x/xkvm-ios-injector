@@ -122,6 +122,7 @@ the -i input; the result is written to -o, or overwrites the input.`,
 	cmd.AddCommand(newCGenCmd())
 	cmd.AddCommand(newExtractCmd())
 	cmd.AddCommand(newCyanCheckCmd())
+	cmd.AddCommand(newCheckCmd())
 	return cmd
 }
 
@@ -157,6 +158,37 @@ func collectTrailingArgs(cmd *cobra.Command, opts *app.Options, args []string) {
 	default:
 		opts.Files = append(opts.Files, args...)
 	}
+}
+
+// newCheckCmd is the merge-completeness gate: verify every bundle-relative
+// load-command dependency in an app/ipa resolves inside the bundle. Catches
+// the ffmpegkit-class gap — a tweak referencing @rpath/X.framework that the
+// app doesn't ship. Exit code 1 when any reference is unresolved.
+func newCheckCmd() *cobra.Command {
+	var input string
+	cmd := &cobra.Command{
+		Use:   "check -i <app|ipa|tipa>",
+		Short: "verify bundle-relative dependencies resolve (merge-completeness check)",
+		Long: `check scans every Mach-O in an app/ipa/tipa for two classes of
+unresolved bundle-relative reference:
+  1. load-command dependencies (@rpath/, @executable_path/, @loader_path/)
+     whose target is absent from the bundle, and
+  2. bare NAME.framework strings in non-main binaries — the runtime-dlopen
+     signature (e.g. RyukGram dlopening ffmpegkit.framework) whose framework
+     the app doesn't ship reachably.
+Frameworks in Frameworks/ and at the app root are reachable from any binary;
+a framework nested inside a .bundle is reachable only from binaries of the
+same tweak family. System frameworks and paths are ignored; dlopen findings
+are reported as suspected. Exit code is 1 when any reference is unresolved.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return app.CheckBundle(input)
+		},
+	}
+	f := cmd.Flags()
+	f.StringVarP(&input, "input", "i", "", "the app/ipa/tipa to check")
+	_ = cmd.MarkFlagRequired("input")
+	return cmd
 }
 
 // newCyanCheckCmd validates .cyan config file(s) without applying them:

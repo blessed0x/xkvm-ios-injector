@@ -197,6 +197,7 @@ Azule's `-m`=skip-hooking collides with cyan's `-m`=minOS; both resolved in cyan
 | `xkvm cgen -o out.cyan` (new, implemented) | generate a shareable `.cyan` config (`-f` payloads → `inject/`, `--root-dylib` marks app-root payloads, `-n`/`-s`/`--ellekit`/`--patch` baked) — upstream pyzule-rw cgen parity + the xkvm `root_dylibs` key | ✔ |
 | `xkvm cyan-check <file.cyan>...` (new, implemented) | validate `.cyan` config(s) **without applying**: read-only report of errors (root_dylibs↔payload mismatches, missing k/l/x payloads, unsafe paths, unknown patch names) and warnings (unknown keys, odd types); exit 1 on any error, 0 with warnings only | ✔ |
 | `xkvm extract -i <app> -o <dir>` (new, implemented) | dump tweak artifacts (dylibs/frameworks/bundles/appex) from an app/ipa/tipa **and write `xkvm-manifest.json`** recording each artifact's original placement; re-injecting those files honors it automatically (§5.3) | ✔ |
+| `xkvm check -i <app|ipa>` (new, implemented) | **merge-completeness check**: scan every bundle-relative load-command dependency (`@rpath/`/`@executable_path`/`@loader_path`) against the bundle's Frameworks/root inventory and report any unresolved reference — the ffmpegkit-gap detector; exit 1 on any missing | ✔ |
 | `-n -v -b -m` | name / version / bundle id / minOS | ✔ |
 | `-k` | icon | ✔ (Go image, drops Pillow) |
 | `-l` | plist merge | ✔ |
@@ -248,6 +249,42 @@ the registry is passed). **warnings** are forward-compatible or benign (unknown
 config keys — a newer-xkvm config must still pass; wrong-typed scalars that
 Parse silently ignores; `f` set with no payloads). CLI: one line per finding,
 `0` errors → exit 0, any error → exit 1; unreadable/not-a-zip is a hard error.
+
+**`xkvm check` — merge-completeness gate (xkvm-native).** Two tiers of
+bundle-relative dependency scanning across every Mach-O in the app:
+
+1. **Tier 1 (deterministic, load commands):** every `@rpath/X.framework`,
+   `@rpath/X.dylib`, `@executable_path/X`, `@loader_path/X` dependency must
+   resolve inside the bundle — `@rpath` against `Frameworks/`, `@executable_path`
+   against the app root (or `Frameworks/` for a leading `Frameworks/` component),
+   `@loader_path` against the referencing binary's own directory. OS-provided
+   Swift runtime shims (`@rpath/libswift*.dylib`) are exempt — dyld resolves
+   those via `/usr/lib/swift` on iOS 12.2+, apps never bundle them. System
+   paths (`/usr/lib`, `/System/Library`) are ignored.
+2. **Tier 2 (heuristic, runtime dlopen):** bare `NAME.framework` tokens in the
+   strings of **non-main** binaries — the runtime-dlopen signature with no
+   load command (RyukGram's settings UI `dlopen`s `ffmpegkit.framework` by
+   string; this is the gap the check exists to catch). Tokens inside paths
+   (`@rpath/…`, `/System/…`) are exempt. Reachability is scoped by the
+   referencing binary's **tweak family** (the stem of the `.bundle`/`.appex`
+   it lives in, or of a root-level `<Name>.dylib`): frameworks in
+   `Frameworks/` and at the app root are reachable from any binary; a
+   framework nested inside a `.bundle` is reachable only from binaries of the
+   same family. This is the distinction between the two real cases — Regram
+   loads FLEX from its own `Regram.bundle` (reachable; the RC build worked),
+   while RyukGram's ffmpegkit dlopen searches Frameworks//its own bundle, so
+   a copy nested inside `Regram.bundle` is **not** reachable (the FIXED build
+   crashed on device despite carrying that copy). Apple/OS frameworks are
+   exempt. Findings are marked `Suspected` (heuristic, not as certain as a
+   tier-1 load command).
+
+`app.Run` auto-warns after every injection (both tiers); the `xkvm check`
+command is the hard gate (exit 1 on any missing ref — tier 2 included, since
+the dlopen class is exactly the runtime crash this catches). Pinned by
+`TestCheckReferences*` (appbundle: tier-1 gap/shipped/root, Swift-shim
+allowlist, tier-2 dlopen flagged + shipped-at-root/system clean),
+`TestRunCheckCatchesMissingInjectedFramework` (app e2e), and
+`TestCheckCmdExitCodes` (cli).
 
 **Apply-flow hook (auto-validation).** `app.Run` runs the same `Validate` on
 every `-z` config inside `mergeCyans` **before** `Parse`, so a broken config is

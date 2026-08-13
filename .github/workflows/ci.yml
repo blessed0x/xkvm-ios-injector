@@ -36,3 +36,12 @@ jobs:
         run: go build ./...
       - name: Test
         run: go test -race ./...
+      # The macos-14/arm64 leg runs the native-toolchain-gated golden tests
+      # (TestCyanCheckGoldenExtractedSet et al.); the suite-wide run above is
+      # non-verbose, so per-test lines never reach the log. Re-run the golden
+      # test with -v here so a PASS/SKIP verdict is visible per push — the
+      # proof that the extract -> cgen -> cyan-check cycle actually executed
+      # on this runner instead of silently skipping.
+      - name: Golden test (verbose)
+        if: matrix.os == 'macos-14'
+        run: go test -race -v ./internal/app/ -run TestCyanCheckGoldenExtractedSet

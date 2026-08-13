@@ -12,6 +12,9 @@ import (
 
 	"github.com/xkvm/xkvm/internal/app"
 	"github.com/xkvm/xkvm/internal/cyanfile"
+	"github.com/xkvm/xkvm/internal/log"
+	"github.com/xkvm/xkvm/internal/macho"
+	"github.com/xkvm/xkvm/internal/testutil"
 )
 
 // runCapturesOptions returns a Runner that records the parsed options.
@@ -300,6 +303,49 @@ func TestCyanCheckWarningsOnlyExitsZero(t *testing.T) {
 	cmd.SetArgs([]string{"cyan-check", warn})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("warning-only config should pass: %v", err)
+	}
+}
+
+// TestCheckCmdExitCodes: `xkvm check` on an app with an unresolved
+// bundle-relative dependency must exit non-zero; a complete app exits 0.
+// Native-toolchain gated: the fixtures are real Mach-O binaries.
+func TestCheckCmdExitCodes(t *testing.T) {
+	testutil.SkipUnlessNativeToolchain(t)
+	log.SetSilent(true)
+	t.Cleanup(func() { log.SetSilent(false) })
+	tmp := t.TempDir()
+
+	appDir := testutil.MakeApp(t, tmp, "TestApp", "com.example.test")
+	if err := os.MkdirAll(filepath.Join(appDir, "Frameworks"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tweak := testutil.MakeTweak(t, tmp, "RyukGram")
+	if err := (macho.Bin{Path: tweak}).InjectWeak("@rpath/ffmpegkit.framework/ffmpegkit"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(tweak, filepath.Join(appDir, "Frameworks", "RyukGram.dylib")); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := NewRootCmd(func(_ context.Context, _ *app.Options) error { return nil })
+	cmd.SetArgs([]string{"check", "-i", appDir})
+	if err := cmd.Execute(); err == nil {
+		t.Fatal("expected check to fail on a missing framework reference")
+	}
+
+	// Ship the framework -> clean.
+	fwDir := filepath.Join(appDir, "Frameworks", "ffmpegkit.framework")
+	if err := os.MkdirAll(fwDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fwBin := testutil.MakeTweak(t, tmp, "ffmpegkit")
+	if err := os.Rename(fwBin, filepath.Join(fwDir, "ffmpegkit")); err != nil {
+		t.Fatal(err)
+	}
+	cmd2 := NewRootCmd(func(_ context.Context, _ *app.Options) error { return nil })
+	cmd2.SetArgs([]string{"check", "-i", appDir})
+	if err := cmd2.Execute(); err != nil {
+		t.Errorf("check should pass once the framework is shipped: %v", err)
 	}
 }
 

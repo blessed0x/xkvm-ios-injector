@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/xkvm/xkvm/internal/appbundle"
 	"github.com/xkvm/xkvm/internal/artifact"
 	"github.com/xkvm/xkvm/internal/cyanfile"
 	"github.com/xkvm/xkvm/internal/ipa"
@@ -355,6 +356,84 @@ func TestCyanCheckGoldenExtractedSet(t *testing.T) {
 	}
 	if errs != 1 {
 		t.Errorf("broken config produced %d error(s), want exactly 1", errs)
+	}
+}
+
+// TestRunCheckCatchesMissingInjectedFramework is the merge-completeness money
+// test: a tweak referencing @rpath/ffmpegkit.framework/ffmpegkit injected
+// WITHOUT the framework produces an output app that CheckReferences flags;
+// the same build WITH the framework shipped is clean.
+func TestRunCheckCatchesMissingInjectedFramework(t *testing.T) {
+	testutil.SkipUnlessNativeToolchain(t)
+	log.SetSilent(true)
+	t.Cleanup(func() { log.SetSilent(false) })
+	tmp := t.TempDir()
+
+	appDir := testutil.MakeApp(t, tmp, "TestApp", "com.example.test")
+	ipaPath := filepath.Join(tmp, "in.ipa")
+	testutil.MakeIPA(t, appDir, ipaPath)
+
+	tweak := testutil.MakeTweak(t, tmp, "RyukGram")
+	if err := (macho.Bin{Path: tweak}).InjectWeak("@rpath/ffmpegkit.framework/ffmpegkit"); err != nil {
+		t.Fatalf("InjectWeak: %v", err)
+	}
+
+	// Build the gap case: tweak only, no ffmpegkit.framework.
+	gapOut := filepath.Join(tmp, "gap.ipa")
+	if err := Run(context.Background(), &Options{
+		Input: ipaPath, Output: gapOut, Files: []string{tweak}, Fakesign: true,
+	}); err != nil {
+		t.Fatalf("Run(gap): %v", err)
+	}
+	gapApp, err := ipa.Extract(gapOut, filepath.Join(tmp, "gapextract"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gapBundle, err := appbundle.Open(gapApp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	refs, err := gapBundle.CheckReferences()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(refs) != 1 || !strings.Contains(refs[0].Dep, "ffmpegkit.framework") {
+		t.Fatalf("gap build: refs = %v, want exactly the ffmpegkit reference", refs)
+	}
+
+	// Build the complete case: tweak + ffmpegkit.framework shipped.
+	fwBin := testutil.MakeTweak(t, tmp, "ffmpegkit")
+	fwDir := filepath.Join(tmp, "ffmpegkit.framework")
+	if err := os.MkdirAll(fwDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(fwBin, filepath.Join(fwDir, "ffmpegkit")); err != nil {
+		t.Fatal(err)
+	}
+	okOut := filepath.Join(tmp, "ok.ipa")
+	if err := Run(context.Background(), &Options{
+		Input: ipaPath, Output: okOut, Files: []string{tweak, fwDir}, Fakesign: true,
+	}); err != nil {
+		t.Fatalf("Run(complete): %v", err)
+	}
+	okApp, err := ipa.Extract(okOut, filepath.Join(tmp, "okextract"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	okBundle, err := appbundle.Open(okApp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if refs, err := okBundle.CheckReferences(); err != nil || len(refs) != 0 {
+		t.Fatalf("complete build: refs = %v, err = %v, want none", refs, err)
+	}
+
+	// And the standalone command path must agree: gap fails, complete passes.
+	if err := CheckBundle(gapOut); err == nil {
+		t.Error("CheckBundle(gap) should fail")
+	}
+	if err := CheckBundle(okOut); err != nil {
+		t.Errorf("CheckBundle(complete) should pass: %v", err)
 	}
 }
 
