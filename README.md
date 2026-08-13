@@ -11,7 +11,8 @@ xKVM merges two lineages:
 
 **Focus (per user scope):** host = macOS, target = `.ipa`. Core = inject `.dylib`/`.deb`
 tweaks into an `.ipa`, and extract tweaks out of one (`xkvm extract`). Azule repo-fetch
-/decrypt (M4/M5) stay wired as flags but are deprioritized.
+(M4) is implemented (`--fetch <tweak-id>` resolves Canister/MobileAPT → debs, with
+dependency recursion); decrypt (M5) stays wired as flags but is deprioritized.
 
 | Milestone | Content | Status |
 |---|---|---|
@@ -19,7 +20,7 @@ tweaks into an `.ipa`, and extract tweaks out of one (`xkvm extract`). Azule rep
 | M1 | Containers: ipa/deb/plist, extract command | ✅ |
 | M2 | Injection parity (hybrid toolchain) | ✅ (deleted — superseded by M3) |
 | M3 | Pure-Go Mach-O (go-macho / codesign) | ✅ (native-only) |
-| M4 | Azule fetch: Canister/MobileAPT | ⬜ |
+| M4 | Azule fetch: Canister/MobileAPT | ✅ |
 | M5 | iOS on-device: decrypt, cross-compile | ⬜ |
 | M6 | Ship: brew tap, releases, docs | ⬜ |
 

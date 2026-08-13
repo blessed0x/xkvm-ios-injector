@@ -12,6 +12,7 @@ import (
 	"github.com/xkvm/xkvm/internal/appbundle"
 	"github.com/xkvm/xkvm/internal/artifact"
 	"github.com/xkvm/xkvm/internal/extras"
+	"github.com/xkvm/xkvm/internal/fetch"
 	"github.com/xkvm/xkvm/internal/inject"
 	"github.com/xkvm/xkvm/internal/ipa"
 	"github.com/xkvm/xkvm/internal/log"
@@ -81,6 +82,20 @@ func Run(ctx context.Context, opts *Options) error {
 		if _, err := bundle.RemoveEncryptedExtensions(); err != nil {
 			return err
 		}
+	}
+
+	// M4: --fetch resolves tweak bundle ids to local .debs (Canister index →
+	// repo Packages index → recursive Depends:) and feeds them into the same
+	// injection set as -f files. --apt-source repos are searched first;
+	// --no-recurse skips the dependency closure.
+	if len(opts.Fetch) > 0 {
+		log.Infof("fetching %d tweak(s) via Canister/MobileAPT", len(opts.Fetch))
+		fetched, err := fetch.Resolve(ctx, opts.Fetch, opts.APTSource, opts.NoRecurse, filepath.Join(tmpdir, "fetch"), nil)
+		if err != nil {
+			return err
+		}
+		log.Infof("fetched %d .deb(s)", len(fetched))
+		opts.Files = append(opts.Files, fetched...)
 	}
 
 	// --patch: bundle the sideload-fix dylibs into the injection set so they

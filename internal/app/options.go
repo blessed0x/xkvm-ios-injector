@@ -85,8 +85,8 @@ func (o *Options) validate() error {
 		}
 	}
 
-	// -f entries are paths today; with --fetch (M4) they may also be repo
-	// bundle ids, so this check will become conditional.
+	// -f entries are local paths; --fetch ids are resolved separately in Run
+	// (M4), so this stat check stays unconditional here.
 	// Normalize like cyan: strip a trailing "/" and dedup by basename
 	// (last wins, matching cyan's dict-overwrite semantics). M1's injection
 	// loop keys on basenames for @rpath/{bn} naming, so this must happen now.
