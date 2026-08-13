@@ -1,0 +1,12 @@
+# Build output
+/bin/
+
+# Reference clone of the upstream python tool (kept for porting reference)
+/upstream/
+
+# Local artifacts. Root-anchored so committed fixtures under testdata/
+# (fixture IPAs, debs, Mach-Os, .cyan files) are NOT ignored.
+/*.ipa
+/*.tipa
+/*.deb
+/*.app

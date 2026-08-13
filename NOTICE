@@ -1,0 +1,32 @@
+# NOTICE — third-party components in xkvm
+
+xkvm embeds (via `//go:embed all:extras`) third-party binaries and frameworks under
+`internal/extras/extras/`. Verify license obligations before any public release.
+
+## Hook frameworks (auto-injected by the injector)
+
+### ElleKit — BSD 3-Clause
+- **Binary:** `internal/extras/extras/ElleKit.framework/ElleKit` — fat **arm64 + arm64e**,
+  version **1.1.3**
+- **Upstream:** https://github.com/evelyneee/ElleKit (BSD 3-Clause; copyright ElleKit Team)
+- **Purpose:** the `--ellekit` injection runtime (see `feather-ellekit-spec.md`, decisions D1/D7/D8)
+- **Rebuild recipe:** `docs/ellekit-build.md` (verified build + assembly steps)
+- **Note:** the embedded `CydiaSubstrate.framework` in this tree is **ElleKit 1.1.3 renamed**
+  (its codesign Identifier is `libellekit.dylib`) — it serves the default substrate mode.
+
+### CydiaSubstrate.framework — permissive (ElleKit-backed)
+- ElleKit 1.1.3 renamed to the substrate install name, as cyan ships it. See ElleKit entry above.
+
+### Orion.framework, Cephei.framework, CepheiUI.framework, CepheiPrefs.framework
+- Carried over from cyan's `extras/` directory (permissive; the Cephei family is
+  GPL-family licensed — verify before public release).
+
+## Sideload fixes (`--patch` injection)
+- `sideloadFixerLol.dylib`, `Sideloadbypass1.dylib` (thinned to arm64 from fat),
+  `Sideloadbypass2.dylib`, `sideloadKeychainFix.dylib`
+- Third-party binaries of **unknown license** (user-provided) — verify before any public release.
+
+## Reference-only (no code copied)
+- **Feather** (`claration/Feather`): GPL-3.0. Used only as a feature reference
+  (`feather-ellekit-spec.md`); no Feather code is included in xkvm.
+- **cyan** (`asdfzxcvbn/pyzule-rw`) and **Azule**: porting references for xkvm's design.
