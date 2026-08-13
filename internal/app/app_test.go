@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/xkvm/xkvm/internal/artifact"
@@ -346,6 +347,120 @@ func TestRunReturnsValidationErrors(t *testing.T) {
 	o := &Options{Input: "bad.xyz"}
 	if err := Run(context.Background(), o); err == nil {
 		t.Fatal("expected Run to surface validation errors")
+	}
+}
+
+// writeCyan is a minimal .cyan archive builder for the apply-flow validation
+// hook tests.
+func writeCyan(t *testing.T, path, config string, entries map[string]string) {
+	t.Helper()
+	zf, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zw := zip.NewWriter(zf)
+	for name, content := range entries {
+		w, err := zw.Create(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.Write([]byte(content)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	w, err := zw.Create("config.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write([]byte(config)); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := zf.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestRunRejectsInvalidCyanConfig: a -z config that fails cyan-check (a
+// root_dylibs entry with no matching inject payload) aborts the run BEFORE
+// any output is produced.
+func TestRunRejectsInvalidCyanConfig(t *testing.T) {
+	log.SetSilent(true)
+	t.Cleanup(func() { log.SetSilent(false) })
+	tmp := t.TempDir()
+	bad := filepath.Join(tmp, "bad.cyan")
+	writeCyan(t, bad, `{"f": true, "root_dylibs": ["Nope.dylib"]}`, map[string]string{
+		"inject/Other.dylib": "other",
+	})
+	out := filepath.Join(tmp, "out.ipa")
+	o := &Options{
+		Input:  zipApp(t, nil),
+		Output: out,
+		Cyans:  []string{bad},
+	}
+	err := Run(context.Background(), o)
+	if err == nil {
+		t.Fatal("expected Run to reject an invalid -z config")
+	}
+	if !strings.Contains(err.Error(), "cyan-check") {
+		t.Errorf("error = %q, want a cyan-check mention", err.Error())
+	}
+	if _, statErr := os.Stat(out); statErr == nil {
+		t.Error("output was produced despite the invalid config")
+	}
+}
+
+// TestRunRejectsUnknownPatchInCyanConfig: a config referencing a patch this
+// build doesn't have is rejected up front, not mid-pipeline after partial
+// work (patch.Apply would fail later with less context).
+func TestRunRejectsUnknownPatchInCyanConfig(t *testing.T) {
+	log.SetSilent(true)
+	t.Cleanup(func() { log.SetSilent(false) })
+	tmp := t.TempDir()
+	bad := filepath.Join(tmp, "badpatch.cyan")
+	writeCyan(t, bad, `{"patches": ["made-up-patch"]}`, map[string]string{
+		"inject/x.dylib": "x",
+	})
+	out := filepath.Join(tmp, "out.ipa")
+	o := &Options{
+		Input:  zipApp(t, nil),
+		Output: out,
+		Cyans:  []string{bad},
+	}
+	err := Run(context.Background(), o)
+	if err == nil {
+		t.Fatal("expected Run to reject a config with an unknown patch")
+	}
+	if !strings.Contains(err.Error(), "cyan-check") {
+		t.Errorf("error = %q, want a cyan-check mention", err.Error())
+	}
+}
+
+// TestRunAcceptsWarningsOnlyCyanConfig: warning-level findings (an unknown
+// config key — forward-compatible by design) must NOT block the apply; the
+// run completes and produces output.
+func TestRunAcceptsWarningsOnlyCyanConfig(t *testing.T) {
+	log.SetSilent(true)
+	t.Cleanup(func() { log.SetSilent(false) })
+	tmp := t.TempDir()
+	warn := filepath.Join(tmp, "warn.cyan")
+	// No inject/ payloads: the fixture's placeholder main binary isn't a real
+	// Mach-O, and injection would try to edit it. The warnings-only config
+	// exercises the plist rename path, which the placeholder handles fine.
+	writeCyan(t, warn, `{"future_feature": true, "n": "WarnApp"}`, nil)
+	out := filepath.Join(tmp, "out.ipa")
+	o := &Options{
+		Input:  zipApp(t, nil),
+		Output: out,
+		Cyans:  []string{warn},
+	}
+	if err := Run(context.Background(), o); err != nil {
+		t.Fatalf("Run() error = %v (warnings must not block the apply)", err)
+	}
+	if _, err := os.Stat(out); err != nil {
+		t.Errorf("output missing after warnings-only config: %v", err)
 	}
 }
 

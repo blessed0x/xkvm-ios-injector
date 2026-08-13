@@ -2,9 +2,11 @@ package app
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"bytes"
 	"compress/gzip"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -12,9 +14,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/xkvm/xkvm/internal/artifact"
+	"github.com/xkvm/xkvm/internal/cyanfile"
 	"github.com/xkvm/xkvm/internal/ipa"
 	"github.com/xkvm/xkvm/internal/log"
 	"github.com/xkvm/xkvm/internal/macho"
+	"github.com/xkvm/xkvm/internal/patch"
 	"github.com/xkvm/xkvm/internal/plist"
 	"github.com/xkvm/xkvm/internal/testutil"
 )
@@ -237,6 +242,168 @@ func TestRunDebInjectionE2E(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(deps, " "), "@rpath/DebTweak.dylib") {
 		t.Errorf("main binary missing deb-injected dep, got %v", deps)
+	}
+}
+
+// TestCyanCheckGoldenExtractedSet is the golden end-to-end for cyan-check
+// against a REAL extracted tweak set (macos-14/arm64 CI leg only): build a
+// fixture app carrying a root dylib + a Frameworks dylib + a bundle, extract
+// them with the production ExtractArtifacts, generate a .cyan config from the
+// extracted files with cyanfile.Generate, and Validate it with the real patch
+// registry — zero error-level issues. Then the golden negative: the same
+// archive with config.json's root_dylibs rewritten to a missing basename must
+// produce exactly one error.
+func TestCyanCheckGoldenExtractedSet(t *testing.T) {
+	testutil.SkipUnlessNativeToolchain(t)
+	log.SetSilent(true)
+	t.Cleanup(func() { log.SetSilent(false) })
+	tmp := t.TempDir()
+
+	// 1. Fixture app: RootLib.dylib at the app root, FrameLib.dylib in
+	// Frameworks/, Assets.bundle next to the binary.
+	appDir := testutil.MakeApp(t, tmp, "TestApp", "com.example.test")
+	rootLib := testutil.MakeTweak(t, filepath.Join(tmp, "build"), "RootLib")
+	frameLib := testutil.MakeTweak(t, filepath.Join(tmp, "build"), "FrameLib")
+	if err := os.Rename(rootLib, filepath.Join(appDir, "RootLib.dylib")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(appDir, "Frameworks"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(frameLib, filepath.Join(appDir, "Frameworks", "FrameLib.dylib")); err != nil {
+		t.Fatal(err)
+	}
+	bundle := filepath.Join(appDir, "Assets.bundle")
+	if err := os.MkdirAll(filepath.Join(bundle, "Contents"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bundle, "Contents", "info"), []byte("assets"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	srcIPA := filepath.Join(tmp, "src.ipa")
+	testutil.MakeIPA(t, appDir, srcIPA)
+
+	// 2. Extract with the production path; the manifest must record both
+	// placements (root + frameworks) for the real dylibs.
+	extractDir := filepath.Join(tmp, "extract")
+	if err := ExtractArtifacts(srcIPA, extractDir); err != nil {
+		t.Fatalf("ExtractArtifacts: %v", err)
+	}
+	m, err := artifact.ReadManifest(filepath.Join(extractDir, "xkvm-manifest.json"))
+	if err != nil {
+		t.Fatalf("manifest missing after extract: %v", err)
+	}
+	placements := map[string]artifact.Placement{}
+	for _, e := range m.Artifacts {
+		placements[e.Name] = e.Placement
+	}
+	if placements["RootLib.dylib"] != artifact.PlacementRoot || placements["FrameLib.dylib"] != artifact.PlacementFrameworks || placements["Assets.bundle"] != artifact.PlacementRoot {
+		t.Fatalf("manifest placements = %v", placements)
+	}
+
+	// 3. Generate a .cyan config from the real extracted dylibs, marking the
+	// root one, and validate it with the real patch registry. The bundle is
+	// intentionally left out: inject/ payloads are flat basenames by design
+	// (upstream cgen parity + the zip-slip guard), so cgen can't yet bundle
+	// directory payloads — tracked as a separate limitation.
+	cyan := filepath.Join(tmp, "golden.cyan")
+	files := []string{
+		filepath.Join(extractDir, "RootLib.dylib"),
+		filepath.Join(extractDir, "FrameLib.dylib"),
+	}
+	if err := cyanfile.Generate(cyanfile.GenerateOptions{
+		Output:     cyan,
+		Files:      files,
+		RootDylibs: files[:1],
+		Name:       "GoldenApp",
+		Fakesign:   true,
+	}); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	knownPatches := map[string]bool{}
+	for _, n := range patch.Names() {
+		knownPatches[n] = true
+	}
+	issues, err := cyanfile.Validate(cyan, knownPatches)
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	for _, is := range issues {
+		if is.Level == cyanfile.IssueError {
+			t.Errorf("generated config failed cyan-check: %s", is.Message)
+		}
+	}
+
+	// 4. Golden negative: same archive, config.json's root_dylibs rewritten
+	// to a basename with no inject payload. Exactly one error.
+	broken := filepath.Join(tmp, "broken.cyan")
+	rewriteCyanConfig(t, cyan, broken, func(cfg map[string]any) {
+		cfg["root_dylibs"] = []string{"Missing.dylib"}
+	})
+	issues, err = cyanfile.Validate(broken, knownPatches)
+	if err != nil {
+		t.Fatalf("Validate(broken): %v", err)
+	}
+	errs := 0
+	for _, is := range issues {
+		if is.Level == cyanfile.IssueError {
+			errs++
+			if !strings.Contains(is.Message, "Missing.dylib") {
+				t.Errorf("unexpected error: %s", is.Message)
+			}
+		}
+	}
+	if errs != 1 {
+		t.Errorf("broken config produced %d error(s), want exactly 1", errs)
+	}
+}
+
+// rewriteCyanConfig copies src to dst, mutating config.json in place.
+func rewriteCyanConfig(t *testing.T, src, dst string, mutate func(map[string]any)) {
+	t.Helper()
+	zin, err := zip.OpenReader(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer zin.Close()
+	zout, err := os.Create(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zw := zip.NewWriter(zout)
+	for _, f := range zin.File {
+		rc, err := f.Open()
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err := io.ReadAll(rc)
+		rc.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if f.Name == "config.json" {
+			var cfg map[string]any
+			if err := json.Unmarshal(data, &cfg); err != nil {
+				t.Fatal(err)
+			}
+			mutate(cfg)
+			if data, err = json.Marshal(cfg); err != nil {
+				t.Fatal(err)
+			}
+		}
+		w, err := zw.Create(f.Name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.Write(data); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := zout.Close(); err != nil {
+		t.Fatal(err)
 	}
 }
 

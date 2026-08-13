@@ -249,6 +249,16 @@ config keys — a newer-xkvm config must still pass; wrong-typed scalars that
 Parse silently ignores; `f` set with no payloads). CLI: one line per finding,
 `0` errors → exit 0, any error → exit 1; unreadable/not-a-zip is a hard error.
 
+**Apply-flow hook (auto-validation).** `app.Run` runs the same `Validate` on
+every `-z` config inside `mergeCyans` **before** `Parse`, so a broken config is
+rejected before any extraction or injection happens. Error-level findings log
+the full report and abort the run with `".cyan failed cyan-check (N error(s));
+nothing was applied"` — this catches conditions `Parse` can't (a bad patch
+name, which would otherwise fail mid-pipeline in `patch.Apply` after partial
+work). Warning-level findings are logged and the config still applies. Pinned
+by `TestRunRejectsInvalidCyanConfig`, `TestRunRejectsUnknownPatchInCyanConfig`,
+and `TestRunAcceptsWarningsOnlyCyanConfig`.
+
 ### 5.2 Extraction placement memory (`xkvm extract`)
 
 `xkvm extract` copies every injectable artifact (dylib/framework/bundle/appex) out of an
@@ -382,6 +392,11 @@ repack .ipa (compression level, exclude hidden files) | emit .app
   (`TestExtractReinjectHonorsPlacement`, native-toolchain-gated).
 - **E2E golden tests:** small committed fixture IPA → run pipeline → assert (a) zip structure,
   (b) injected load command present, (c) Info.plist keys, (d) code signature parses.
+- **cyan-check golden (macos-14/arm64 leg):** `TestCyanCheckGoldenExtractedSet` builds real
+  Mach-O fixtures carrying a root dylib + a Frameworks dylib + a bundle, runs the production
+  `ExtractArtifacts`, generates a `.cyan` from the extracted dylibs (`cyanfile.Generate`), and
+  `Validate`s it with the real patch registry — zero error-level issues; the golden negative
+  rewrites `root_dylibs` in the same archive and asserts exactly one error.
 - **Differential harness (highest-value):** run the *same* input through cyan (reference) and
   xkvm; diff the semantic output (file sets, load commands, plist keys — not bytes). Every
   feature-port milestone must pass differential parity before being marked done.

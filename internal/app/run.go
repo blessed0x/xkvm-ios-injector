@@ -399,6 +399,29 @@ func rootDylibsFromManifests(files []string) ([]string, error) {
 func mergeCyans(opts *Options, tmpdir string) error {
 	for i, c := range opts.Cyans {
 		log.Infof("parsing %s..", filepath.Base(c))
+		// cyan-check hook: validate BEFORE parsing so a broken config is
+		// rejected before any extraction/injection happens. Parse already
+		// errors on the format-level conditions, but a bad patch name would
+		// otherwise fail mid-pipeline in patch.Apply after partial work, and
+		// warnings (unknown keys, odd types) were never surfaced at all.
+		// Error-level findings abort the run; warnings are logged and the
+		// config still applies.
+		issues, err := cyanfile.Validate(c, patchNames())
+		if err != nil {
+			return fmt.Errorf("validating %s: %w", c, err)
+		}
+		hasError := false
+		for _, is := range issues {
+			if is.Level == cyanfile.IssueError {
+				hasError = true
+				log.Errorf("%s: %s", filepath.Base(c), is.Message)
+			} else {
+				log.Warnf("%s: %s", filepath.Base(c), is.Message)
+			}
+		}
+		if hasError {
+			return fmt.Errorf("%s failed cyan-check (%d error(s)); nothing was applied", filepath.Base(c), countLevel(issues, cyanfile.IssueError))
+		}
 		outDir := filepath.Join(tmpdir, fmt.Sprintf("cyan-%d", i))
 		cfg, err := cyanfile.Parse(c, outDir)
 		if err != nil {
@@ -449,6 +472,27 @@ func mergeCyans(opts *Options, tmpdir string) error {
 		opts.Patches = append(opts.Patches, cfg.Patches...)
 	}
 	return nil
+}
+
+// patchNames returns the registry of registered compatibility-patch names,
+// used by the cyan-check hook to catch configs referencing a patch this build
+// doesn't have (patch.Apply would fail on them mid-pipeline).
+func patchNames() map[string]bool {
+	names := map[string]bool{}
+	for _, n := range patch.Names() {
+		names[n] = true
+	}
+	return names
+}
+
+func countLevel(issues []cyanfile.Issue, level string) int {
+	n := 0
+	for _, is := range issues {
+		if is.Level == level {
+			n++
+		}
+	}
+	return n
 }
 
 func prepareApp(input, tmpdir string, isIPA bool) (string, error) {
