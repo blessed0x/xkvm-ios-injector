@@ -2,8 +2,10 @@ package extras
 
 // This file adds the bundled sideload-fix dylibs injected by xkvm --patch.
 // They repair common App Store / keychain / entitlement issues that show up
-// on sideloaded apps (they came from the user's AyuGram sideload kit, thinned
-// to arm64 so the native signer never has to round-trip a fat binary).
+// on sideloaded apps (they came from the user's AyuGram sideload kit and a
+// YouTube Music mod, thinned to arm64 so the native signer never has to
+// round-trip a fat binary). zxPluginsInject.dylib is a MobileSubstrate tweak
+// that hooks NSUserDefaults (it ships with the set by user request).
 //
 // PROVENANCE: these are third-party jailbreak/sideload binaries of unknown
 // license, embedded into the xkvm distributable. Verify redistribution
@@ -22,6 +24,7 @@ var SideloadFixNames = []string{
 	"Sideloadbypass1.dylib",
 	"Sideloadbypass2.dylib",
 	"sideloadKeychainFix.dylib",
+	"zxPluginsInject.dylib",
 }
 
 // MaterializeSideloadFixes writes every bundled sideload-fix dylib into dir

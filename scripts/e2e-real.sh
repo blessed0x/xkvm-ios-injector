@@ -165,12 +165,12 @@ mkdir -p "$T/check3" && ( cd "$T/check3" && unzip -q "$T/Out-patch.ipa" )
 APP3="$T/check3/Payload/RealApp.app"
 echo "-- Frameworks listing --"
 ls "$APP3/Frameworks/"
-for fix in sideloadFixerLol.dylib Sideloadbypass1.dylib Sideloadbypass2.dylib sideloadKeychainFix.dylib; do
+for fix in sideloadFixerLol.dylib Sideloadbypass1.dylib Sideloadbypass2.dylib sideloadKeychainFix.dylib zxPluginsInject.dylib; do
   test -f "$APP3/Frameworks/$fix" || { echo "FAIL: $fix missing from Frameworks"; exit 1; }
 done
-loads=$(otool -L "$APP3/RealApp" | grep -cE '@rpath/(sideloadFixerLol|Sideloadbypass1|Sideloadbypass2|sideloadKeychainFix)')
-test "$loads" -eq 4 || { echo "FAIL: expected 4 sideload loads, got $loads"; exit 1; }
-echo "main binary has $loads/4 sideload load commands"
+loads=$(otool -L "$APP3/RealApp" | grep -cE '@rpath/(sideloadFixerLol|Sideloadbypass1|Sideloadbypass2|sideloadKeychainFix|zxPluginsInject)')
+test "$loads" -eq 5 || { echo "FAIL: expected 5 sideload loads, got $loads"; exit 1; }
+echo "main binary has $loads/5 sideload load commands"
 cp "$APP3/RealApp" "$T/patch-main.bin"
 codesign --verify --verbose=2 "$T/patch-main.bin" 2>&1; echo "patch codesign exit=$?"
 cp "$APP3/Frameworks/sideloadKeychainFix.dylib" "$T/patch-dylib.bin"

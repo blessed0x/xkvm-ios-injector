@@ -179,7 +179,7 @@ Azule's `-m`=skip-hooking collides with cyan's `-m`=minOS; both resolved in cyan
 | `-x` | entitlements | ✔ |
 | `-u -w -d -s -q -e -g -c` | uisd / no-watch / documents / fakesign / thin / ext / enc-ext / compress-level | ✔ |
 | `--ignore-encrypted --overwrite` | | ✔ |
-| `--patch` (new) | inject the bundled sideload-fix dylibs (implies `--fakesign`) | ✔ |
+| `--patch` (new) | inject the bundled sideload dylib set — App Store/keychain repairs + bundled tweaks (`zxPluginsInject`); implies `--fakesign` | ✔ |
 | `--ellekit` (new) | use the real ElleKit runtime: rewrite all legacy hooking spellings to `@rpath/ElleKit.framework/ElleKit`, auto-inject + thin the framework to the app's arch | ✔ (feather-ellekit) |
 | `--liquid-glass` / `--liquid-glass-compat` (new) | iOS 26 Liquid Glass compat patch: `UIDesignRequiresCompatibility` ± `LC_BUILD_VERSION.sdk → 26.0` (mutually exclusive) | ✔ (feather-ellekit) |
 | `--force-fullscreen` (new) | set `UIRequiresFullScreen=true` (sideloaded apps that break under Split View); template for future patches — the CLI binds flags automatically from the `internal/patch` registry | ✔ (feather-ellekit) |

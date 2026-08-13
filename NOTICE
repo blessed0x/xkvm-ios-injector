@@ -23,8 +23,12 @@ xkvm embeds (via `//go:embed all:extras`) third-party binaries and frameworks un
 
 ## Sideload fixes (`--patch` injection)
 - `sideloadFixerLol.dylib`, `Sideloadbypass1.dylib` (thinned to arm64 from fat),
-  `Sideloadbypass2.dylib`, `sideloadKeychainFix.dylib`
-- Third-party binaries of **unknown license** (user-provided) — verify before any public release.
+  `Sideloadbypass2.dylib`, `sideloadKeychainFix.dylib` (the keychain fix is now the
+  build extracted from the user's YouTube Music mod, sha `f8d81929…`),
+  `zxPluginsInject.dylib` (MobileSubstrate tweak hooking NSUserDefaults; extracted
+  from the same mod, sha `cd903ea1…`)
+- Third-party binaries of **unknown license** (user-provided / extracted from a mod)
+  — verify before any public release.
 
 ## Reference-only (no code copied)
 - **Feather** (`claration/Feather`): GPL-3.0. Used only as a feature reference

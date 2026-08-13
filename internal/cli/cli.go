@@ -97,7 +97,7 @@ the -i input; the result is written to -o, or overwrites the input.`,
 	f.IntVarP(&opts.Compress, "compress", "c", 6, "ipa compression level (0-9, default 6)")
 	f.BoolVar(&opts.IgnoreEncrypted, "ignore-encrypted", false, "skip the main binary encryption check")
 	f.BoolVar(&opts.Overwrite, "overwrite", false, "overwrite existing files without confirming")
-	f.BoolVar(&opts.Patch, "patch", false, "inject the bundled sideload-fix dylibs (repairs App Store/keychain issues on sideloaded apps; implies --fakesign)")
+	f.BoolVar(&opts.Patch, "patch", false, "inject the bundled sideload dylib set (App Store/keychain repairs + bundled tweaks; implies --fakesign)")
 	f.BoolVar(&opts.ElleKit, "ellekit", false, "use the real ElleKit runtime: rewrite all legacy hooking spellings to @rpath/ElleKit.framework/ElleKit and thin the framework to the app's architecture (feather-ellekit-spec.md D2)")
 	// One bool flag per registered compatibility patch (spec D10). The
 	// registry is stable-sorted, so flag order is deterministic.
