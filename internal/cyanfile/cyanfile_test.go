@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -199,6 +200,161 @@ func TestParseIgnoresUnknownKeys(t *testing.T) {
 	if cfg.Name != "App" || len(cfg.Files) != 1 {
 		t.Errorf("known keys not applied: name=%q files=%d", cfg.Name, len(cfg.Files))
 	}
+}
+
+// TestValidateValidConfig: a well-formed config (payloads match root_dylibs,
+// bundled payloads present) yields no issues.
+func TestValidateValidConfig(t *testing.T) {
+	tmp := t.TempDir()
+	cyan := filepath.Join(tmp, "ok.cyan")
+	writeArchive(t, cyan, `{
+		"f": true,
+		"root_dylibs": ["Regram.dylib"],
+		"k": true, "l": true, "x": true,
+		"n": "App", "s": true, "c": 3
+	}`, map[string]string{
+		"inject/Regram.dylib": "regram",
+		"inject/Other.dylib":  "other",
+		"icon.idk":            "icon",
+		"merge.plist":         "plist",
+		"new.entitlements":    "ents",
+	})
+	issues, err := Validate(cyan, nil)
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if len(issues) != 0 {
+		t.Errorf("issues = %v, want none", issues)
+	}
+}
+
+func TestValidateRootDylibMismatch(t *testing.T) {
+	tmp := t.TempDir()
+	cyan := filepath.Join(tmp, "bad.cyan")
+	writeArchive(t, cyan, `{"f": true, "root_dylibs": ["Nope.dylib"]}`, map[string]string{
+		"inject/Other.dylib": "other",
+	})
+	issues, err := Validate(cyan, nil)
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if !hasIssue(issues, IssueError, "Nope.dylib") {
+		t.Errorf("issues = %v, want an error mentioning Nope.dylib", issues)
+	}
+}
+
+func TestValidateMissingFilePayload(t *testing.T) {
+	tmp := t.TempDir()
+	cyan := filepath.Join(tmp, "noicon.cyan")
+	// k is set but icon.idk is absent — apply would error.
+	writeArchive(t, cyan, `{"k": true}`, nil)
+	issues, err := Validate(cyan, nil)
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if !hasIssue(issues, IssueError, "icon.idk") {
+		t.Errorf("issues = %v, want an error mentioning icon.idk", issues)
+	}
+}
+
+func TestValidateUnknownKeyWarning(t *testing.T) {
+	tmp := t.TempDir()
+	cyan := filepath.Join(tmp, "typo.cyan")
+	writeArchive(t, cyan, `{"f": true, "rootdylibs": ["X.dylib"]}`, map[string]string{
+		"inject/X.dylib": "x",
+	})
+	issues, err := Validate(cyan, nil)
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if !hasIssue(issues, IssueWarning, "rootdylibs") {
+		t.Errorf("issues = %v, want a warning for the typo'd key rootdylibs", issues)
+	}
+	if hasIssue(issues, IssueError, "") {
+		t.Errorf("issues = %v, unknown keys must stay warnings (forward compat)", issues)
+	}
+}
+
+func TestValidateUnsafeInjectPath(t *testing.T) {
+	tmp := t.TempDir()
+	cyan := filepath.Join(tmp, "evil.cyan")
+	writeArchive(t, cyan, `{"f": true}`, map[string]string{
+		"inject/../../evil.dylib": "evil",
+	})
+	issues, err := Validate(cyan, nil)
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if !hasIssue(issues, IssueError, "unsafe inject payload path") {
+		t.Errorf("issues = %v, want the unsafe-path error", issues)
+	}
+}
+
+func TestValidateUnknownPatch(t *testing.T) {
+	tmp := t.TempDir()
+	cyan := filepath.Join(tmp, "patch.cyan")
+	writeArchive(t, cyan, `{"patches": ["liquid-glass", "made-up"]}`, map[string]string{
+		"inject/x.dylib": "x",
+	})
+	// knownPatches provided: the unknown name must be an error (apply fails).
+	issues, err := Validate(cyan, map[string]bool{"liquid-glass": true})
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if !hasIssue(issues, IssueError, "made-up") {
+		t.Errorf("issues = %v, want an error for the unknown patch made-up", issues)
+	}
+	// Without knownPatches the cross-check is skipped entirely.
+	issues, err = Validate(cyan, nil)
+	if err != nil {
+		t.Fatalf("Validate(nil patches): %v", err)
+	}
+	if hasIssue(issues, IssueError, "") {
+		t.Errorf("issues = %v, patch cross-check should be skipped when knownPatches is nil", issues)
+	}
+}
+
+func TestValidateMissingConfigJson(t *testing.T) {
+	tmp := t.TempDir()
+	cyan := filepath.Join(tmp, "empty.cyan")
+	writeArchive(t, cyan, "", map[string]string{"inject/x.dylib": "x"})
+	issues, err := Validate(cyan, nil)
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if !hasIssue(issues, IssueError, "config.json") {
+		t.Errorf("issues = %v, want a missing-config.json error", issues)
+	}
+}
+
+func TestValidateMalformedConfig(t *testing.T) {
+	tmp := t.TempDir()
+	cyan := filepath.Join(tmp, "broken.cyan")
+	writeArchive(t, cyan, "{not json", map[string]string{"inject/x.dylib": "x"})
+	issues, err := Validate(cyan, nil)
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if len(issues) != 1 || issues[0].Level != IssueError {
+		t.Errorf("issues = %v, want a single parse error", issues)
+	}
+}
+
+func TestValidateNotAZip(t *testing.T) {
+	tmp := t.TempDir()
+	notZip := writeTemp(t, tmp, "plain.txt", "hello")
+	if _, err := Validate(notZip, nil); err == nil {
+		t.Fatal("expected a non-zip file to be a hard error")
+	}
+}
+
+func hasIssue(issues []Issue, level, substr string) bool {
+	for _, is := range issues {
+		if is.Level == level && (substr == "" || strings.Contains(is.Message, substr)) {
+			return true
+		}
+	}
+	return false
 }
 
 // TestConfigScalarFields sanity-checks the Config struct shape so a future

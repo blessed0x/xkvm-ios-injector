@@ -195,6 +195,7 @@ Azule's `-m`=skip-hooking collides with cyan's `-m`=minOS; both resolved in cyan
 | `-f` | tweak/item(s) to inject | ✔ (+ accept **repo package id** when `--fetch` used) |
 | `--root-dylib` (new) | inject dylib(s) to the **app root** with an `@executable_path` load command instead of Frameworks/`@rpath` — for dlopen-based tweaks (e.g. Regram) that resolve resources relative to `@executable_path` and crash when relocated to Frameworks; use together with `-f <same file>` to also carry the file into the injection set | ✔ |
 | `xkvm cgen -o out.cyan` (new, implemented) | generate a shareable `.cyan` config (`-f` payloads → `inject/`, `--root-dylib` marks app-root payloads, `-n`/`-s`/`--ellekit`/`--patch` baked) — upstream pyzule-rw cgen parity + the xkvm `root_dylibs` key | ✔ |
+| `xkvm cyan-check <file.cyan>...` (new, implemented) | validate `.cyan` config(s) **without applying**: read-only report of errors (root_dylibs↔payload mismatches, missing k/l/x payloads, unsafe paths, unknown patch names) and warnings (unknown keys, odd types); exit 1 on any error, 0 with warnings only | ✔ |
 | `xkvm extract -i <app> -o <dir>` (new, implemented) | dump tweak artifacts (dylibs/frameworks/bundles/appex) from an app/ipa/tipa **and write `xkvm-manifest.json`** recording each artifact's original placement; re-injecting those files honors it automatically (§5.3) | ✔ |
 | `-n -v -b -m` | name / version / bundle id / minOS | ✔ |
 | `-k` | icon | ✔ (Go image, drops Pillow) |
@@ -231,10 +232,22 @@ Azule's `-m`=skip-hooking collides with cyan's `-m`=minOS; both resolved in cyan
   the keys this version knows). Zip-slip payload paths are rejected.
 - Configs are applied in `-z` order; later configs win over earlier ones for scalar keys.
 
-Implemented in `internal/cyanfile` (`Parse`/`Generate`), consumed by `app.Run` **before**
-`validate()` (payloads must be materialized before the file-existence gate) and by
-`xkvm cgen` (implemented — replaces the M4 stub). Round-trip-pinned in
-`internal/cyanfile/cyanfile_test.go` and `TestCGenGeneratesRootDylibConfig`.
+Implemented in `internal/cyanfile` (`Parse`/`Generate`/`Validate`), consumed by `app.Run` **before**
+`validate()` (payloads must be materialized before the file-existence gate), by
+`xkvm cgen` (implemented — replaces the M4 stub), and by `xkvm cyan-check`
+(`Validate` — read-only, no payload materialization). Round-trip-pinned in
+`internal/cyanfile/cyanfile_test.go` and `TestCGenGeneratesRootDylibConfig`;
+cyan-check exit semantics pinned in `TestCyanCheck{Valid,Invalid,WarningsOnly}`.
+
+**`xkvm cyan-check` contract.** `Validate(path, knownPatches)` opens the archive
+and reports issues without extracting anything: **errors** are exactly the
+conditions `Parse`/apply would fail on (a `root_dylibs` basename with no
+matching `inject/` payload — same message as Parse; a `k`/`l`/`x` key whose
+archive payload is absent; an unsafe `inject/` path; an unknown patch name when
+the registry is passed). **warnings** are forward-compatible or benign (unknown
+config keys — a newer-xkvm config must still pass; wrong-typed scalars that
+Parse silently ignores; `f` set with no payloads). CLI: one line per finding,
+`0` errors → exit 0, any error → exit 1; unreadable/not-a-zip is a hard error.
 
 ### 5.2 Extraction placement memory (`xkvm extract`)
 

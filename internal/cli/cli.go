@@ -121,6 +121,7 @@ the -i input; the result is written to -o, or overwrites the input.`,
 
 	cmd.AddCommand(newCGenCmd())
 	cmd.AddCommand(newExtractCmd())
+	cmd.AddCommand(newCyanCheckCmd())
 	return cmd
 }
 
@@ -156,6 +157,61 @@ func collectTrailingArgs(cmd *cobra.Command, opts *app.Options, args []string) {
 	default:
 		opts.Files = append(opts.Files, args...)
 	}
+}
+
+// newCyanCheckCmd validates .cyan config file(s) without applying them:
+// payload/root_dylibs mismatches and everything else that would fail at apply
+// time. Exit code 1 on any error-level finding, 0 with warnings only.
+func newCyanCheckCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "cyan-check <file.cyan>...",
+		Short: "validate .cyan config file(s) before applying them",
+		Long: `cyan-check reads each .cyan archive (config.json + inject/ payloads) and
+reports problems without extracting anything to disk: root_dylibs entries
+with no matching inject/ payload, k/l/x file payloads the archive lacks,
+unsafe payload paths, and unknown patch names. Warnings cover unknown
+config keys (forward-compatible) and odd value types. Exit code is 1 when
+any error-level finding exists, 0 when only warnings (or nothing) did.`,
+		Args: cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			knownPatches := map[string]bool{}
+			for _, n := range patch.Names() {
+				knownPatches[n] = true
+			}
+			failed := 0
+			for _, f := range args {
+				issues, err := cyanfile.Validate(f, knownPatches)
+				if err != nil {
+					log.Errorf("cyan-check %s: %v", f, err)
+					failed++
+					continue
+				}
+				log.Infof("cyan-check %s", f)
+				errs, warns := 0, 0
+				for _, is := range issues {
+					switch is.Level {
+					case cyanfile.IssueError:
+						errs++
+						log.Errorf("error: %s", is.Message)
+					default:
+						warns++
+						log.Warnf("warning: %s", is.Message)
+					}
+				}
+				if errs == 0 {
+					log.Infof("%d error(s), %d warning(s) — OK", errs, warns)
+				} else {
+					log.Infof("%d error(s), %d warning(s) — INVALID", errs, warns)
+					failed++
+				}
+			}
+			if failed > 0 {
+				return fmt.Errorf("cyan-check: %d file(s) with errors", failed)
+			}
+			return nil
+		},
+	}
+	return cmd
 }
 
 // newExtractCmd dumps the injectable artifacts (dylib/framework/appex/bundle)

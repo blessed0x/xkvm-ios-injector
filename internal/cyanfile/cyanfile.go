@@ -23,6 +23,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -364,4 +365,179 @@ func writeFileEntry(zw *zip.Writer, name, src string) error {
 	}
 	_, err = io.Copy(w, in)
 	return err
+}
+
+// Issue is one cyan-check finding. Level is IssueError (the config would fail
+// when applied) or IssueWarning (harmless or forward-compatible, e.g. an
+// unknown key that Parse ignores).
+type Issue struct {
+	Level   string
+	Message string
+}
+
+const (
+	IssueError   = "error"
+	IssueWarning = "warning"
+)
+
+// knownKeys is the config.json key set Parse understands. Anything else is
+// forward-compatible and ignored when applying, so cyan-check flags it as a
+// warning (a typo'd key would otherwise apply silently as a no-op).
+var knownKeys = map[string]bool{
+	"f": true, "k": true, "l": true, "x": true,
+	"n": true, "v": true, "b": true, "m": true, "c": true,
+	"s": true, "q": true, "e": true, "g": true, "w": true, "d": true, "u": true,
+	"ellekit": true, "ignore-encrypted": true, "overwrite": true,
+	"root_dylibs": true, "patches": true,
+}
+
+// Validate reads path and reports issues WITHOUT materializing payloads to
+// disk (cyan-check: validate before applying). Every error-level issue is a
+// condition Parse or the apply pipeline would fail on: a root_dylibs entry
+// with no matching inject/ payload, a k/l/x file payload that the archive
+// lacks, an unsafe inject/ path, or a patch name no registered patch knows.
+// Warnings are forward-compatible or benign (unknown keys, odd value types,
+// an "f" key with no payloads). knownPatches, when non-nil, enables the
+// patch-name cross-check. A hard failure (unreadable file, not a zip) is
+// returned as an error; everything inside the archive is an Issue.
+func Validate(path string, knownPatches map[string]bool) ([]Issue, error) {
+	zr, err := zip.OpenReader(path)
+	if err != nil {
+		return nil, fmt.Errorf("opening %s: %w", path, err)
+	}
+	defer zr.Close()
+
+	var issues []Issue
+	entries := map[string]*zip.File{}
+	for _, f := range zr.File {
+		entries[f.Name] = f
+	}
+
+	cf, ok := entries["config.json"]
+	if !ok {
+		return []Issue{{IssueError, "archive lacks config.json"}}, nil
+	}
+	rc, err := cf.Open()
+	if err != nil {
+		return nil, err
+	}
+	data, err := io.ReadAll(rc)
+	rc.Close()
+	if err != nil {
+		return nil, err
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return []Issue{{IssueError, fmt.Sprintf("config.json: %v", err)}}, nil
+	}
+
+	// Unknown keys (sorted for stable output).
+	var unknown []string
+	for k := range raw {
+		if !knownKeys[k] {
+			unknown = append(unknown, k)
+		}
+	}
+	sort.Strings(unknown)
+	for _, k := range unknown {
+		issues = append(issues, Issue{IssueWarning, fmt.Sprintf("unknown config key %q (ignored when applying; possible typo)", k)})
+	}
+
+	// inject/ payloads: every entry must be a flat basename under inject/.
+	var injectNames []string
+	for name := range entries {
+		if !strings.HasPrefix(name, "inject/") {
+			continue
+		}
+		rel := strings.TrimPrefix(name, "inject/")
+		if rel == "" || filepath.Base(rel) != rel || rel == ".." || strings.Contains(rel, "..") {
+			issues = append(issues, Issue{IssueError, fmt.Sprintf("unsafe inject payload path %q", name)})
+			continue
+		}
+		injectNames = append(injectNames, filepath.Base(rel))
+	}
+	sort.Strings(injectNames)
+
+	if v, ok := raw["f"]; ok {
+		var b bool
+		if err := json.Unmarshal(v, &b); err != nil || !b {
+			issues = append(issues, Issue{IssueWarning, "key \"f\" should be true (file-valued flag; payloads ship in inject/)"})
+		}
+		if len(injectNames) == 0 {
+			issues = append(issues, Issue{IssueWarning, "config sets \"f\" but the archive has no inject/ payloads"})
+		}
+	}
+
+	// root_dylibs: each entry must match an inject payload basename (Parse
+	// errors on a mismatch when applying — mirror it exactly).
+	if v, ok := raw["root_dylibs"]; ok {
+		var names []string
+		if err := json.Unmarshal(v, &names); err != nil {
+			issues = append(issues, Issue{IssueError, fmt.Sprintf("root_dylibs: %v", err)})
+		} else {
+			inSet := map[string]bool{}
+			for _, n := range injectNames {
+				inSet[n] = true
+			}
+			for i, n := range names {
+				if !inSet[n] {
+					issues = append(issues, Issue{IssueError, fmt.Sprintf("root_dylibs[%d] %q: not an inject payload", i, n)})
+				}
+			}
+		}
+	}
+
+	// k/l/x file payloads must exist in the archive when the key is set.
+	for key, archiveName := range map[string]string{
+		"k": "icon.idk", "l": "merge.plist", "x": "new.entitlements",
+	} {
+		if _, ok := raw[key]; !ok {
+			continue
+		}
+		if _, ok := entries[archiveName]; !ok {
+			issues = append(issues, Issue{IssueError, fmt.Sprintf("config has %q but the archive lacks %s", key, archiveName)})
+		}
+	}
+
+	// Scalar type checks: Parse silently ignores a wrong-typed value, so a
+	// typo'd shape applies as a silent no-op — warn about it.
+	checkString := func(key string) {
+		if v, ok := raw[key]; ok {
+			var s string
+			if err := json.Unmarshal(v, &s); err != nil {
+				issues = append(issues, Issue{IssueWarning, fmt.Sprintf("key %q: expected a string (%v)", key, err)})
+			}
+		}
+	}
+	for _, k := range []string{"n", "v", "b", "m"} {
+		checkString(k)
+	}
+	if v, ok := raw["c"]; ok {
+		var n int
+		if err := json.Unmarshal(v, &n); err != nil {
+			issues = append(issues, Issue{IssueWarning, fmt.Sprintf("key \"c\": expected an integer (%v)", err)})
+		}
+	}
+	for _, k := range []string{"s", "q", "e", "g", "w", "d", "u", "ellekit", "ignore-encrypted", "overwrite"} {
+		if v, ok := raw[k]; ok {
+			var b bool
+			if err := json.Unmarshal(v, &b); err != nil {
+				issues = append(issues, Issue{IssueWarning, fmt.Sprintf("key %q: expected a boolean (%v)", k, err)})
+			}
+		}
+	}
+	if v, ok := raw["patches"]; ok {
+		var names []string
+		if err := json.Unmarshal(v, &names); err != nil {
+			issues = append(issues, Issue{IssueWarning, fmt.Sprintf("key \"patches\": expected an array of strings (%v)", err)})
+		} else if knownPatches != nil {
+			for _, n := range names {
+				if !knownPatches[n] {
+					issues = append(issues, Issue{IssueError, fmt.Sprintf("patch %q: no registered patch with that name (apply would fail)", n)})
+				}
+			}
+		}
+	}
+
+	return issues, nil
 }

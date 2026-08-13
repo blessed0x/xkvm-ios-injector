@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"os"
@@ -225,6 +226,80 @@ func TestCGenGeneratesRootDylibConfig(t *testing.T) {
 	}
 	if cfg.Name != "App" || !cfg.Fakesign {
 		t.Errorf("baked scalars wrong: name=%q fakesign=%v", cfg.Name, cfg.Fakesign)
+	}
+}
+
+// writeCyan is a minimal .cyan archive builder for cyan-check tests.
+func writeCyan(t *testing.T, path, config string, entries map[string]string) {
+	t.Helper()
+	zf, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zw := zip.NewWriter(zf)
+	for name, content := range entries {
+		w, err := zw.Create(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.Write([]byte(content)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	w, err := zw.Create("config.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write([]byte(config)); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := zf.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCyanCheckValidExitsZero(t *testing.T) {
+	tmp := t.TempDir()
+	ok := filepath.Join(tmp, "ok.cyan")
+	writeCyan(t, ok, `{"f": true, "root_dylibs": ["R.dylib"], "s": true}`, map[string]string{
+		"inject/R.dylib": "r",
+	})
+	cmd := NewRootCmd(func(_ context.Context, _ *app.Options) error { return nil })
+	cmd.SetArgs([]string{"cyan-check", ok})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("valid config should pass: %v", err)
+	}
+}
+
+func TestCyanCheckInvalidExitsNonZero(t *testing.T) {
+	tmp := t.TempDir()
+	bad := filepath.Join(tmp, "bad.cyan")
+	writeCyan(t, bad, `{"f": true, "root_dylibs": ["Nope.dylib"]}`, map[string]string{
+		"inject/R.dylib": "r",
+	})
+	cmd := NewRootCmd(func(_ context.Context, _ *app.Options) error { return nil })
+	cmd.SetArgs([]string{"cyan-check", bad})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected cyan-check to fail on a root_dylibs mismatch")
+	}
+	if !strings.Contains(err.Error(), "cyan-check") {
+		t.Errorf("error = %q, want a cyan-check summary", err.Error())
+	}
+}
+
+func TestCyanCheckWarningsOnlyExitsZero(t *testing.T) {
+	tmp := t.TempDir()
+	warn := filepath.Join(tmp, "warn.cyan")
+	// Unknown key + f without payloads are warnings, not errors.
+	writeCyan(t, warn, `{"future_feature": true}`, nil)
+	cmd := NewRootCmd(func(_ context.Context, _ *app.Options) error { return nil })
+	cmd.SetArgs([]string{"cyan-check", warn})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("warning-only config should pass: %v", err)
 	}
 }
 
