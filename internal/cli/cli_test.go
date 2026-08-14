@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
+
 	"github.com/xscope0/xkvm-ios-injector/internal/app"
 	"github.com/xscope0/xkvm-ios-injector/internal/cyanfile"
 	"github.com/xscope0/xkvm-ios-injector/internal/log"
@@ -28,7 +30,7 @@ func runCapturesOptions(t *testing.T, got *app.Options) Runner {
 
 func TestRootParsesFullFlagSurface(t *testing.T) {
 	var got app.Options
-	cmd := NewRootCmd(runCapturesOptions(t, &got))
+	cmd := NewRootCmd(runCapturesOptions(t, &got), nil)
 
 	var out bytes.Buffer
 	cmd.SetOut(&out)
@@ -74,7 +76,7 @@ func TestRootAcceptsSpaceSeparatedArrayValues(t *testing.T) {
 	// cyan's nargs="+" lets a single -f consume space-separated values;
 	// trailing positionals must fold into the last array flag.
 	var got app.Options
-	cmd := NewRootCmd(runCapturesOptions(t, &got))
+	cmd := NewRootCmd(runCapturesOptions(t, &got), nil)
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
@@ -92,7 +94,7 @@ func TestRootAcceptsSpaceSeparatedArrayValues(t *testing.T) {
 func TestRootDecryptSpaceSeparatedForm(t *testing.T) {
 	// The documented `--decrypt <apple-id> <password>` form must work.
 	var got app.Options
-	cmd := NewRootCmd(runCapturesOptions(t, &got))
+	cmd := NewRootCmd(runCapturesOptions(t, &got), nil)
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
@@ -108,7 +110,7 @@ func TestRootDecryptSpaceSeparatedForm(t *testing.T) {
 }
 
 func TestRootRequiresInput(t *testing.T) {
-	cmd := NewRootCmd(func(_ context.Context, _ *app.Options) error { return nil })
+	cmd := NewRootCmd(func(_ context.Context, _ *app.Options) error { return nil }, nil)
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
@@ -118,8 +120,70 @@ func TestRootRequiresInput(t *testing.T) {
 	}
 }
 
+// TestRootUnknownSubcommandHintsReinstall pins the stale-binary hint: an
+// unknown subcommand with no -i is treated as a positional arg (cyan's
+// nargs="+" compatibility), and the error must tell the user the real fix
+// (reinstall) instead of only saying "input not set". This is what a user
+// running an old binary sees when they type 'xkvm tui'.
+// newRootNoTUI builds a root command without the tui subcommand, simulating
+// a stale binary: 'xkvm tui' then lands as a positional arg (cobra falls
+// back to the root with arbitrary args) and the root RunE must hint at a
+// reinstall instead of only saying "input not set". The tuiStarter is a
+// stub so a mistake (TUI actually starting) is visible as `started`.
+func newRootNoTUI() (*cobra.Command, *bool) {
+	started := false
+	cmd := NewRootCmd(func(_ context.Context, _ *app.Options) error { return nil }, func() { started = true })
+	for _, sub := range cmd.Commands() {
+		if sub.Name() == "tui" {
+			cmd.RemoveCommand(sub)
+			break
+		}
+	}
+	return cmd, &started
+}
+
+func TestRootUnknownSubcommandHintsReinstall(t *testing.T) {
+	cmd, started := newRootNoTUI()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"tui"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected an error for unknown subcommand without -i")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, `did you mean a subcommand? "tui" isn't one`) {
+		t.Errorf("hint missing; got:\n%s", msg)
+	}
+	if !strings.Contains(msg, "go install github.com/xscope0/xkvm-ios-injector/cmd/xkvm@main") {
+		t.Errorf("reinstall command missing; got:\n%s", msg)
+	}
+	if *started {
+		t.Error("TUI must not start when the subcommand is unknown")
+	}
+}
+
+// TestRootTUISubcommandStarts pins the happy path: with the tui subcommand
+// present, 'xkvm tui' dispatches to the starter (stubbed) and returns nil
+// instead of erroring about -i.
+func TestRootTUISubcommandStarts(t *testing.T) {
+	var started bool
+	cmd := NewRootCmd(func(_ context.Context, _ *app.Options) error { return nil }, func() { started = true })
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"tui"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("xkvm tui failed: %v", err)
+	}
+	if !started {
+		t.Error("tui starter was never called")
+	}
+}
+
 func TestRootVersionFlag(t *testing.T) {
-	cmd := NewRootCmd(func(_ context.Context, _ *app.Options) error { return nil })
+	cmd := NewRootCmd(func(_ context.Context, _ *app.Options) error { return nil }, nil)
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
@@ -138,7 +202,7 @@ func TestRootPatchFlagsCollectedInRegistryOrder(t *testing.T) {
 	// order regardless of the order they were passed, so patch.Apply runs
 	// deterministically (spec D10).
 	var got app.Options
-	cmd := NewRootCmd(runCapturesOptions(t, &got))
+	cmd := NewRootCmd(runCapturesOptions(t, &got), nil)
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
@@ -157,7 +221,7 @@ func TestRootVShortIsAppVersion(t *testing.T) {
 	// -v must stay free for the app-version modifier (cyan semantics), not
 	// become cobra's --version shorthand.
 	var got app.Options
-	cmd := NewRootCmd(runCapturesOptions(t, &got))
+	cmd := NewRootCmd(runCapturesOptions(t, &got), nil)
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
@@ -172,7 +236,7 @@ func TestRootVShortIsAppVersion(t *testing.T) {
 }
 
 func TestExtractCmd(t *testing.T) {
-	cmd := NewRootCmd(func(_ context.Context, _ *app.Options) error { return nil })
+	cmd := NewRootCmd(func(_ context.Context, _ *app.Options) error { return nil }, nil)
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
@@ -188,7 +252,7 @@ func TestExtractCmd(t *testing.T) {
 }
 
 func TestCGenRequiresOutput(t *testing.T) {
-	cmd := NewRootCmd(func(_ context.Context, _ *app.Options) error { return nil })
+	cmd := NewRootCmd(func(_ context.Context, _ *app.Options) error { return nil }, nil)
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
@@ -211,7 +275,7 @@ func TestCGenGeneratesRootDylibConfig(t *testing.T) {
 	}
 	out := filepath.Join(tmp, "patch.cyan")
 
-	cmd := NewRootCmd(func(_ context.Context, _ *app.Options) error { return nil })
+	cmd := NewRootCmd(func(_ context.Context, _ *app.Options) error { return nil }, nil)
 	cmd.SetArgs([]string{"cgen", "-o", out, "-f", tweak, "--root-dylib", tweak, "-n", "App", "-s"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("cgen: %v", err)
@@ -270,7 +334,7 @@ func TestCyanCheckValidExitsZero(t *testing.T) {
 	writeCyan(t, ok, `{"f": true, "root_dylibs": ["R.dylib"], "s": true}`, map[string]string{
 		"inject/R.dylib": "r",
 	})
-	cmd := NewRootCmd(func(_ context.Context, _ *app.Options) error { return nil })
+	cmd := NewRootCmd(func(_ context.Context, _ *app.Options) error { return nil }, nil)
 	cmd.SetArgs([]string{"cyan-check", ok})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("valid config should pass: %v", err)
@@ -283,7 +347,7 @@ func TestCyanCheckInvalidExitsNonZero(t *testing.T) {
 	writeCyan(t, bad, `{"f": true, "root_dylibs": ["Nope.dylib"]}`, map[string]string{
 		"inject/R.dylib": "r",
 	})
-	cmd := NewRootCmd(func(_ context.Context, _ *app.Options) error { return nil })
+	cmd := NewRootCmd(func(_ context.Context, _ *app.Options) error { return nil }, nil)
 	cmd.SetArgs([]string{"cyan-check", bad})
 	err := cmd.Execute()
 	if err == nil {
@@ -299,7 +363,7 @@ func TestCyanCheckWarningsOnlyExitsZero(t *testing.T) {
 	warn := filepath.Join(tmp, "warn.cyan")
 	// Unknown key + f without payloads are warnings, not errors.
 	writeCyan(t, warn, `{"future_feature": true}`, nil)
-	cmd := NewRootCmd(func(_ context.Context, _ *app.Options) error { return nil })
+	cmd := NewRootCmd(func(_ context.Context, _ *app.Options) error { return nil }, nil)
 	cmd.SetArgs([]string{"cyan-check", warn})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("warning-only config should pass: %v", err)
@@ -327,7 +391,7 @@ func TestCheckCmdExitCodes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cmd := NewRootCmd(func(_ context.Context, _ *app.Options) error { return nil })
+	cmd := NewRootCmd(func(_ context.Context, _ *app.Options) error { return nil }, nil)
 	cmd.SetArgs([]string{"check", "-i", appDir})
 	if err := cmd.Execute(); err == nil {
 		t.Fatal("expected check to fail on a missing framework reference")
@@ -342,7 +406,7 @@ func TestCheckCmdExitCodes(t *testing.T) {
 	if err := os.Rename(fwBin, filepath.Join(fwDir, "ffmpegkit")); err != nil {
 		t.Fatal(err)
 	}
-	cmd2 := NewRootCmd(func(_ context.Context, _ *app.Options) error { return nil })
+	cmd2 := NewRootCmd(func(_ context.Context, _ *app.Options) error { return nil }, nil)
 	cmd2.SetArgs([]string{"check", "-i", appDir})
 	if err := cmd2.Execute(); err != nil {
 		t.Errorf("check should pass once the framework is shipped: %v", err)

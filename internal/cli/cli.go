@@ -21,17 +21,24 @@ import (
 // capture function; production wires it to app.Run.
 type Runner func(ctx context.Context, opts *app.Options) error
 
+// TUIStarter launches the interactive menu. Injectable so tests can stub it
+// (the real TUI reads os.Stdin, which blocks in test runs). Production wires
+// it to tui.New().Start.
+type TUIStarter func()
+
 // Main builds and executes the root command, mapping any error to a non-zero exit.
 func Main() {
-	if err := NewRootCmd(app.Run).Execute(); err != nil {
+	if err := NewRootCmd(app.Run, tui.New().Start).Execute(); err != nil {
 		log.Errorf("%v", err)
 		os.Exit(1)
 	}
 }
 
 // NewRootCmd returns the `xkvm` command with the full cyan-compatible flag
-// surface, plus the Azule-heritage long flags (implemented in M4/M5).
-func NewRootCmd(run Runner) *cobra.Command {
+// surface, plus the Azule-heritage long flags (implemented in M4/M5). The
+// tuiStarter is only used by the tui subcommand; pass nil in tests that never
+// invoke it.
+func NewRootCmd(run Runner, tuiStarter TUIStarter) *cobra.Command {
 	opts := &app.Options{}
 	var (
 		silent      bool
@@ -79,6 +86,12 @@ to the -i input; the result is written to -o, or overwrites the input.`,
 				// Manual check (cobra's MarkFlagRequired runs before RunE
 				// and would block --version). Matches cyan's argparse
 				// required=True for -i/--input.
+				if len(args) > 0 {
+					// A stale binary (or a typo) treats an unknown subcommand
+					// as a positional arg, then fails here with a confusing
+					// "input not set". Point at the real fix: reinstall.
+					return fmt.Errorf("required flag(s) \"input\" not set\n\n  did you mean a subcommand? %q isn't one. if you recently installed xkvm,\n  your copy may be out of date; reinstall with:\n\n    go install github.com/xscope0/xkvm-ios-injector/cmd/xkvm@main\n\n  then run 'xkvm --help' to see the current commands", args[0])
+				}
 				return fmt.Errorf("required flag(s) \"input\" not set")
 			}
 			collectTrailingArgs(cmd, opts, args)
@@ -130,7 +143,7 @@ to the -i input; the result is written to -o, or overwrites the input.`,
 	f.StringArrayVar(&opts.Decrypt, "decrypt", nil, "iOS only: decrypt an App Store app (apple-id password; values may be space-separated)")
 	f.StringVarP(&opts.Country, "country", "C", "", "country code for ipatool / iTunes lookup")
 
-	cmd.AddCommand(newTUICmd())
+	cmd.AddCommand(newTUICmd(tuiStarter))
 	cmd.AddCommand(newCGenCmd())
 	cmd.AddCommand(newExtractCmd())
 	cmd.AddCommand(newCyanCheckCmd())
@@ -179,8 +192,9 @@ func collectTrailingArgs(cmd *cobra.Command, opts *app.Options, args []string) {
 // newTUICmd is the friendly menu mode: it drives the same internal/app
 // functions the flags do, but asks questions in plain words and animates
 // work with a block-art spinner. Zero dependencies; degrades to a plain
-// prompt when stdin is piped.
-func newTUICmd() *cobra.Command {
+// prompt when stdin is piped. The starter is injectable so tests can stub
+// out the os.Stdin read; production passes tui.New().Start.
+func newTUICmd(start TUIStarter) *cobra.Command {
 	return &cobra.Command{
 		Use:   "tui",
 		Short: "menu mode: asks questions in plain words, no flags to remember",
@@ -192,7 +206,10 @@ Use it when you are not sure which flags you need. Each menu screen
 shows the equivalent command, so it doubles as a reference.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			tui.New().Start()
+			if start == nil {
+				start = tui.New().Start
+			}
+			start()
 			return nil
 		},
 	}
