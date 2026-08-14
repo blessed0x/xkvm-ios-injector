@@ -28,22 +28,24 @@ func readPinnedFixture(t *testing.T, rel, sha string) []byte {
 	return raw
 }
 
-// buildSandyFixture stages a rootless deb carrying the given profile under
-// var/jb/Library/libSandy/ and converts it through ConvertToRoothide,
-// returning the converted profile bytes.
-func convertSandyProfile(t *testing.T, tmp string, profile []byte) []byte {
+// convertPlistAt stages profile at var/jb/<rel> inside a rootless deb,
+// converts it through ConvertToRoothide, and returns the converted bytes
+// read back from the output package at <rel> (post-hoist, so rel is the
+// payload-relative path).
+func convertPlistAt(t *testing.T, tmp, rel string, profile []byte) []byte {
 	t.Helper()
 	staging := filepath.Join(tmp, "staging")
-	os.MkdirAll(filepath.Join(staging, "var", "jb", "Library", "libSandy"), 0o755)
-	if err := os.WriteFile(filepath.Join(staging, "var", "jb", "Library", "libSandy", "Profile.plist"), profile, 0o644); err != nil {
+	dst := filepath.Join(staging, "var", "jb", filepath.FromSlash(rel))
+	os.MkdirAll(filepath.Dir(dst), 0o755)
+	if err := os.WriteFile(dst, profile, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	os.MkdirAll(filepath.Join(staging, "DEBIAN"), 0o755)
-	control := "Package: sandytweak\nVersion: 1.0\nArchitecture: iphoneos-arm64\nDepends: mobilesubstrate\nDescription: sandy golden\nMaintainer: xkvm\n"
+	control := "Package: sandytweak\nVersion: 1.0\nArchitecture: iphoneos-arm64\nDepends: mobilesubstrate\nDescription: plist golden\nMaintainer: xkvm\n"
 	if err := os.WriteFile(filepath.Join(staging, "DEBIAN", "control"), []byte(control), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	in := filepath.Join(tmp, "rootless-sandy.deb")
+	in := filepath.Join(tmp, "rootless.deb")
 	if err := deb.Build(staging, in); err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -55,7 +57,7 @@ func convertSandyProfile(t *testing.T, tmp string, profile []byte) []byte {
 	if err := deb.Unpack(out, unpacked); err != nil {
 		t.Fatal(err)
 	}
-	data, err := os.ReadFile(filepath.Join(unpacked, "Library", "libSandy", "Profile.plist"))
+	data, err := os.ReadFile(filepath.Join(unpacked, filepath.FromSlash(rel)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +104,7 @@ func TestSandyGoldenRealProfile(t *testing.T) {
 		t.Fatalf("fixture is not a valid plist: %v", err)
 	}
 
-	data := convertSandyProfile(t, t.TempDir(), raw)
+	data := convertPlistAt(t, t.TempDir(), "Library/libSandy/Profile.plist", raw)
 	if !strings.HasPrefix(string(data), "<?xml") {
 		t.Fatalf("converted plist not XML; first bytes: %q", data[:min(40, len(data))])
 	}
@@ -167,7 +169,7 @@ func TestSandyGoldenRootlessProfile(t *testing.T) {
 		t.Fatalf("fixture is not a valid plist: %v", err)
 	}
 
-	data := convertSandyProfile(t, t.TempDir(), raw)
+	data := convertPlistAt(t, t.TempDir(), "Library/libSandy/Profile.plist", raw)
 	if !strings.HasPrefix(string(data), "<?xml") {
 		t.Fatalf("converted plist not XML (binary → xml1 conversion failed); first bytes: %q", data[:min(40, len(data))])
 	}

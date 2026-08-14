@@ -66,3 +66,9 @@ xkvm embeds (via `//go:embed all:extras`) third-party binaries and frameworks un
   its `/var/jb` twin — the fixture pinning the jbroot-strip side of the
   dance (see `TestSandyGoldenRootlessProfile`). Same sha-pinned provenance
   (`b0f869fb92b7fdab…`).
+- **com.opa334.sandyd.plist / com.opa334.sandyd.rootless.plist**
+  (`opa334/libSandy`, MIT): the sandyd LaunchDaemon in its rootful and
+  rootless variants — fixtures pinning the LaunchDaemons plist branch
+  (`/var/jb/` → `/` only, no rootfs dance; see
+  `TestLaunchDaemonsGoldenReal`). Sha-pinned provenance
+  (`fa20343eac583ba6…` / `9b858e414ebd8168…`).

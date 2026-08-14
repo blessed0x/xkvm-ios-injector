@@ -116,6 +116,15 @@ jobs:
       - name: Sandy golden real profiles (verbose)
         if: matrix.os == 'macos-14'
         run: go test -race -v ./internal/rootless/ -run 'TestSandyGoldenRealProfile|TestSandyGoldenRootlessProfile'
+      # LaunchDaemons golden vs the real sandyd daemon plists (pure Go —
+      # also in the suite-wide step on both legs; verbose re-run for the
+      # log). Pins the rootful and rootless variants of the same real
+      # daemon: the rootless /var/jb/... program path strips to the root,
+      # the rootful /usr/local path is untouched, and no rootfs dance
+      # applies to LaunchDaemons.
+      - name: LaunchDaemons golden (verbose)
+        if: matrix.os == 'macos-14'
+        run: go test -race -v ./internal/rootless/ -run TestLaunchDaemonsGoldenReal
       # Generality smoke (macos-14 only, needs go + Xcode for Mach-O
       # fixtures): build ten hermetic fixture IPAs with fully generic names
       # and assert xkvm check's exit code on each — the same sweep that ran
