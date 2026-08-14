@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/xscope0/xkvm-ios-injector/internal/app"
+	"github.com/xscope0/xkvm-ios-injector/internal/deb"
 )
 
 // runUI pipes input into a fresh UI and returns everything it printed.
@@ -116,5 +119,62 @@ func TestTUIBadChoiceThenQuit(t *testing.T) {
 	}
 	if !strings.Contains(out, "bye!") {
 		t.Errorf("missing farewell; output:\n%s", out)
+	}
+}
+
+// goldenShadowDeb is the committed real-world fixture: Shadow_3.0-0.rc3.deb
+// (jjolano's jailbreak-detection bypass, fat armv7+arm64+arm64e). The TUI
+// convert flow runs the real app.Rootless against it — no mocks — so this
+// test proves the menu actually drives a genuine deb-to-rootless conversion
+// and lands the result where the user said. Pure Go, so it runs on every CI
+// leg (same fixture the internal/rootless golden tests use).
+const goldenShadowDeb = "../../testdata/fixtures/debs/Shadow_3.0-0.rc3.deb"
+
+func TestTUIConvertFlowRootlessRealDeb(t *testing.T) {
+	tmp := t.TempDir()
+	fixture, err := filepath.Abs(goldenShadowDeb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(fixture); err != nil {
+		t.Fatalf("golden fixture missing at %s: %v", fixture, err)
+	}
+	out := filepath.Join(tmp, "shadow-rootless.deb")
+
+	// Menu 3 (convert) -> option 1 (rootful .deb to rootless) -> the real
+	// fixture -> the output path -> quit.
+	input := "3\n1\n" + fixture + "\n" + out + "\nq\n"
+	uiOut := runUI(t, input, nil)
+
+	// The flow must report success and actually produce the .deb.
+	if !strings.Contains(uiOut, "rootless .deb ready") {
+		t.Errorf("success line missing; output:\n%s", uiOut)
+	}
+	if _, err := os.Stat(out); err != nil {
+		t.Fatalf("converted .deb not written to the prompted path %s: %v\noutput:\n%s", out, err, uiOut)
+	}
+
+	// The result is a real rootless package: payload under var/jb, control
+	// carrying iphoneos-arm64 (the rootless arch), dylib still a valid file.
+	unpacked := filepath.Join(tmp, "unpacked")
+	if err := deb.Unpack(out, unpacked); err != nil {
+		t.Fatalf("Unpack converted deb: %v", err)
+	}
+	for _, want := range []string{
+		filepath.Join(unpacked, "var", "jb", "Library", "MobileSubstrate", "DynamicLibraries", "Shadow.dylib"),
+		filepath.Join(unpacked, "var", "jb", "Library", "MobileSubstrate", "DynamicLibraries", "Shadow.plist"),
+	} {
+		if _, err := os.Stat(want); err != nil {
+			t.Errorf("rootless payload missing %s: %v", filepath.Base(want), err)
+		}
+	}
+	ctl, err := os.ReadFile(filepath.Join(unpacked, "DEBIAN", "control"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Architecture: iphoneos-arm64", "cy+cpu.arm64v8"} {
+		if !strings.Contains(string(ctl), want) {
+			t.Errorf("converted control missing %q:\n%s", want, ctl)
+		}
 	}
 }

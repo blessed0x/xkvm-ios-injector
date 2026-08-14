@@ -90,7 +90,8 @@ jobs:
       # the per-test PASS lands in the log.
       # TUI menu (pure Go — runs on every leg in the suite-wide step).
       # Pipes menu input through the interactive UI and pins the help/about
-      # screens, menu dispatch, error surfacing, and graceful quit.
+      # screens, menu dispatch, error surfacing, graceful quit, and the real
+      # deb-to-rootless convert flow against the Shadow fixture.
       - name: TUI menu (verbose)
         if: matrix.os == 'macos-14'
         run: go test -race -v ./internal/tui/
