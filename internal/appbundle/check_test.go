@@ -293,6 +293,58 @@ func TestCheckReferencesSuspectedNestedNotReachableCrossFamily(t *testing.T) {
 	}
 }
 
+// TestCheckReferencesGenericAppNotTiedToInstagram: the check is app-agnostic.
+// A fully generic app + tweak + framework (StockApp / CoolTweak /
+// MissingMedia — no Instagram-family naming anywhere) must behave identically
+// to the RyukGram case: the missing framework is flagged (deterministically,
+// tier 1), and shipping it resolves the reference. This pins the guarantee
+// that nothing in the check keys on the motivating example's names.
+func TestCheckReferencesGenericAppNotTiedToInstagram(t *testing.T) {
+	testutil.SkipUnlessNativeToolchain(t)
+	tmp := t.TempDir()
+	appDir := testutil.MakeApp(t, tmp, "StockApp", "com.example.stockapp")
+	if err := os.MkdirAll(filepath.Join(appDir, "Frameworks"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tweak := testutil.MakeTweak(t, tmp, "CoolTweak")
+	if err := (macho.Bin{Path: tweak}).InjectWeak("@rpath/MissingMedia.framework/MissingMedia"); err != nil {
+		t.Fatalf("InjectWeak: %v", err)
+	}
+	if err := os.Rename(tweak, filepath.Join(appDir, "Frameworks", "CoolTweak.dylib")); err != nil {
+		t.Fatal(err)
+	}
+
+	// Missing framework -> flagged, tier-1 (not Suspected), naming the gap.
+	b, err := Open(appDir)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	refs, err := b.CheckReferences()
+	if err != nil {
+		t.Fatalf("CheckReferences: %v", err)
+	}
+	if len(refs) != 1 || refs[0].Suspected || !strings.Contains(refs[0].Dep, "MissingMedia.framework") {
+		t.Fatalf("refs = %v, want exactly the deterministic MissingMedia reference", refs)
+	}
+
+	// Ship MissingMedia.framework -> the same reference resolves, clean.
+	fwDir := filepath.Join(appDir, "Frameworks", "MissingMedia.framework")
+	if err := os.MkdirAll(fwDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fwBin := testutil.MakeTweak(t, tmp, "MissingMedia")
+	if err := os.Rename(fwBin, filepath.Join(fwDir, "MissingMedia")); err != nil {
+		t.Fatal(err)
+	}
+	refs, err = b.CheckReferences()
+	if err != nil {
+		t.Fatalf("CheckReferences: %v", err)
+	}
+	if len(refs) != 0 {
+		t.Errorf("refs = %v, want none once MissingMedia.framework is shipped", refs)
+	}
+}
+
 // TestCheckReferencesExecutablePathRoot: a root-placed dylib's
 // @executable_path reference resolves against the app root; absent target is
 // flagged, present target is clean.

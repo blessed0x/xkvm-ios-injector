@@ -45,3 +45,12 @@ jobs:
       - name: Golden test (verbose)
         if: matrix.os == 'macos-14'
         run: go test -race -v ./internal/app/ -run TestCyanCheckGoldenExtractedSet
+      # Generality smoke (macos-14 only, needs go + Xcode for Mach-O
+      # fixtures): build ten hermetic fixture IPAs with fully generic names
+      # and assert xkvm check's exit code on each — the same sweep that ran
+      # against the real downloaded mod IPAs, synthesized so CI needs no
+      # external files. Covers clean apps, tier-1 load gaps, tier-2 dlopen
+      # gaps, same/cross-family nested dlopen, and the Swift-shim allowlist.
+      - name: Generality smoke (10 fixture IPAs)
+        if: matrix.os == 'macos-14'
+        run: bash scripts/check-smoke.sh
