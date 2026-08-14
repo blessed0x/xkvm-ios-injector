@@ -1,0 +1,43 @@
+# Goreleaser release config. The archive names are load-bearing: the
+# one-shot installers (scripts/install.sh, scripts/install.ps1) derive the
+# asset URL from these exact names, so keep the naming scheme stable.
+#
+#   xkvm_{version}_{os}_{arch}.tar.gz   (macOS, Linux)
+#   xkvm_{version}_{os}_{arch}.zip      (Windows)
+#
+# Examples: xkvm_0.1.0_darwin_arm64.tar.gz, xkvm_0.1.0_linux_amd64.tar.gz,
+# xkvm_0.1.0_windows_amd64.zip
+version: 2
+
+project_name: xkvm
+
+builds:
+  - id: xkvm
+    main: ./cmd/xkvm
+    binary: xkvm
+    goos: [darwin, linux, windows]
+    goarch: [arm64, amd64]
+    env:
+      - CGO_ENABLED=0
+
+archives:
+  - id: default
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    # Default template: {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    wrap_in_directory: true
+    # Ship just the binary and the license; the README is already on GitHub.
+    files:
+      - LICENSE
+      - NOTICE
+
+checksum:
+  name_template: checksums.txt
+
+release:
+  # The one-liners install from the latest release; nothing special needed.
+  github:
+    owner: xscope0
+    name: xkvm-ios-injector

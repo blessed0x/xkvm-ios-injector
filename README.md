@@ -69,18 +69,26 @@ xkvm check -i App-Tweaked.ipa                         # find missing files befor
 
 ## Installation
 
-**Requirements:** macOS (primary), [Go 1.26+](https://go.dev/dl/).
+**One-shot install** — downloads the latest release binary, no Go needed:
+
+| OS | One-liner |
+|---|---|
+| **macOS / Linux** (Ubuntu, Arch, ...) | `curl -fsSL https://raw.githubusercontent.com/xscope0/xkvm-ios-injector/main/scripts/install.sh \| bash` |
+| **Windows** (PowerShell) | `irm https://raw.githubusercontent.com/xscope0/xkvm-ios-injector/main/scripts/install.ps1 \| iex` |
+| **Any OS with Go** | `go install github.com/xscope0/xkvm-ios-injector/cmd/xkvm@latest` |
+
+The installers detect your OS and architecture, download the matching
+release asset, and put `xkvm` on your PATH. Before the first release ships,
+they fall back to `go install` automatically. Set `XKVM_PREFIX` (bash) to
+choose the install location (default: `~/.local/bin`, or `/opt/homebrew/bin`
+on Apple Silicon with Homebrew).
+
+**From source** (requires [Go 1.26+](https://go.dev/dl/)):
 
 ```bash
 git clone https://github.com/xscope0/xkvm-ios-injector.git
 cd xkvm-ios-injector
 make build          # produces ./bin/xkvm
-```
-
-Or install directly with Go:
-
-```bash
-go install github.com/xscope0/xkvm-ios-injector/cmd/xkvm@main
 ```
 
 Check that it works:
