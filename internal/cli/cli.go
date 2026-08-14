@@ -1,5 +1,5 @@
 // Package cli wires the xkvm command line: flag definitions, help text and
-// subcommands (xkvm, xkvm cgen). Flag semantics are cyan-compatible; see
+// subcommands (xkvm, xkvm cgen, ...). Flag semantics are cyan-compatible; see
 // ARCHITECTURE.md §5 for the full surface and collision decisions.
 package cli
 
@@ -44,12 +44,13 @@ func NewRootCmd(run Runner) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "xkvm [flags] -i <app>",
 		Short: "iOS app modifier & tweak injector (cyan + Azule heritage, in Go)",
-		Long: `xkvm is a friendly toolbox for iOS apps: it puts tweaks (small programs
-that change how an app behaves) inside .ipa files, pulls them back out,
-and converts tweak packages between the formats different jailbreaks use.
+		Long: `xkvm works with iOS apps. Give it an app (.ipa/.tipa/.app) and a tweak,
+and it puts the tweak inside, re-signs the result, and repacks it. It can
+also pull tweaks back out of an app, and convert tweak packages between
+the formats different jailbreaks use.
 
-Not sure where to start? Run 'xkvm tui' for a menu that asks questions in
-plain words. Or use the command line:
+Not sure where to start? Run 'xkvm tui' for a menu that asks one question
+at a time. Or use the command line:
 
   xkvm -i App.ipa -f MyTweak.dylib -o App-Tweaked.ipa   inject a tweak
   xkvm extract -i App.ipa -o tweaks/                   pull tweaks out
@@ -91,7 +92,7 @@ to the -i input; the result is written to -o, or overwrites the input.`,
 	f.StringVarP(&opts.Output, "output", "o", "", "output path (.app/.ipa/.tipa); defaults to overwriting the input")
 	f.StringArrayVarP(&opts.Cyans, "cyan", "z", nil, ".cyan config file(s) to use (repeatable; values may be space-separated)")
 	f.StringArrayVarP(&opts.Files, "file", "f", nil, "tweak to inject / item to add to the bundle (repeatable; values may be space-separated)")
-	f.StringArrayVar(&opts.RootDylibs, "root-dylib", nil, "inject dylib to the app root with an @executable_path load command instead of Frameworks/@rpath — for dlopen-based tweaks like Regram that resolve resources relative to @executable_path (repeatable)")
+	f.StringArrayVar(&opts.RootDylibs, "root-dylib", nil, "inject dylib at the app root with an @executable_path load command instead of Frameworks/@rpath. For dlopen-based tweaks like Regram that resolve resources relative to @executable_path (repeatable)")
 	f.StringVarP(&opts.Name, "name", "n", "", "modify the app's name")
 	f.StringVarP(&opts.Version, "app-version", "v", "", "modify the app's version")
 	f.StringVarP(&opts.BundleID, "bundle-id", "b", "", "modify the app's bundle id")
@@ -110,7 +111,7 @@ to the -i input; the result is written to -o, or overwrites the input.`,
 	f.BoolVar(&opts.IgnoreEncrypted, "ignore-encrypted", false, "skip the main binary encryption check")
 	f.BoolVar(&opts.Overwrite, "overwrite", false, "overwrite existing files without confirming")
 	f.BoolVar(&opts.Patch, "patch", false, "inject the bundled sideload dylib set (App Store/keychain repairs + bundled tweaks; implies --fakesign)")
-	f.BoolVar(&opts.ElleKit, "ellekit", false, "use the real ElleKit runtime: rewrite all legacy hooking spellings to @rpath/ElleKit.framework/ElleKit and thin the framework to the app's architecture (feather-ellekit-spec.md D2)")
+	f.BoolVar(&opts.ElleKit, "ellekit", false, "use the real ElleKit runtime: rewrite legacy hooking spellings to @rpath/ElleKit.framework/ElleKit and thin the framework to the app's architecture")
 	// One bool flag per registered compatibility patch (spec D10). The
 	// registry is stable-sorted, so flag order is deterministic.
 	patchFlags = make(map[string]*bool, len(patch.Names()))
@@ -182,13 +183,13 @@ func collectTrailingArgs(cmd *cobra.Command, opts *app.Options, args []string) {
 func newTUICmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "tui",
-		Short: "friendly menu mode — asks questions in plain words (great for beginners)",
-		Long: `tui is the friendliest way to use xkvm: a colorful menu that explains
-each tool in plain words, asks you one question at a time ("which app do
-you want to tweak?"), animates work with a block spinner, and shows you
-what happened. It drives the exact same engine as the command line — no
-separate behavior. Tip: run 'xkvm tui' when you're not sure which flags
-you need; the menu teaches you the command for next time.`,
+		Short: "menu mode: asks questions in plain words, no flags to remember",
+		Long: `tui runs the same engine as the command line, but asks you one question
+at a time ("which app do you want to tweak?"), shows a spinner while it
+works, and prints what happened when it finishes.
+
+Use it when you are not sure which flags you need. Each menu screen
+shows the equivalent command, so it doubles as a reference.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			tui.New().Start()
@@ -210,7 +211,7 @@ func newCheckCmd() *cobra.Command {
 unresolved bundle-relative reference:
   1. load-command dependencies (@rpath/, @executable_path/, @loader_path/)
      whose target is absent from the bundle, and
-  2. bare NAME.framework strings in non-main binaries — the runtime-dlopen
+  2. bare NAME.framework strings in non-main binaries: the runtime-dlopen
      signature (e.g. RyukGram dlopening ffmpegkit.framework) whose framework
      the app doesn't ship reachably.
 Frameworks in Frameworks/ and at the app root are reachable from any binary;
@@ -239,8 +240,9 @@ func newCyanCheckCmd() *cobra.Command {
 reports problems without extracting anything to disk: root_dylibs entries
 with no matching inject/ payload, k/l/x file payloads the archive lacks,
 unsafe payload paths, and unknown patch names. Warnings cover unknown
-config keys (forward-compatible) and odd value types. Exit code is 1 when
-any error-level finding exists, 0 when only warnings (or nothing) did.`,
+config keys (kept for forward compatibility) and odd value types. Exit
+code is 1 when any error-level finding exists, 0 when only warnings (or
+nothing) did.`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			knownPatches := map[string]bool{}
@@ -339,7 +341,7 @@ replaces it. Use 'xkvm rootless' to convert the result.`,
 }
 
 // newUndebCmd extracts a tweak .deb and dumps its injectable artifacts
-// (dylib/framework/bundle) with a placement manifest — the Forte (deb→dylib)
+// (dylib/framework/bundle) with a placement manifest: the Forte (deb-to-dylib)
 // equivalent, tool-native.
 func newUndebCmd() *cobra.Command {
 	var input, output string
@@ -347,9 +349,10 @@ func newUndebCmd() *cobra.Command {
 		Use:   "undeb -i <tweak.deb> -o <dir>",
 		Short: "extract tweak artifacts (dylibs, bundles) from a .deb",
 		Long: `undeb unpacks a tweak .deb and copies its injectable artifacts (dylibs,
-frameworks, bundles) into -o, writing the same xkvm-manifest.json sidecar
-as 'xkvm extract' so re-injection restores original placements. This is the
-deb→dylib direction of the Dylib-to-Deb-Converter / Forte workflow.`,
+frameworks, bundles) into -o. It writes the same xkvm-manifest.json
+sidecar as 'xkvm extract', so re-injecting those files restores their
+original placements. This is the deb-to-dylib direction of the
+Dylib-to-Deb-Converter / Forte workflow.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return app.Undeb(input, output)
@@ -374,9 +377,9 @@ func newRootlessCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "rootless -i <rootful.deb> -o <rootless.deb> [--thin] [--tweakinject]",
 		Short: "convert a rootful .deb to rootless",
-		Long: `rootless converts a rootful jailbreak .deb to a rootless one, porting the
-rootless-patcher pipeline: the payload is repacked under var/jb, the control
-file gains iphoneos-arm64 + the rootless runtime dependency
+		Long: `rootless converts a rootful jailbreak .deb to a rootless one (the
+rootless-patcher pipeline): the payload is repacked under var/jb, the
+control file gains iphoneos-arm64 and the rootless runtime dependency
 (cy+cpu.arm64v8 | oldabi-xina | oldabi), and Mach-O load-command dylib
 paths whose first component is a bootstrap root (/Library, /usr, ...) are
 rewritten under /var/jb honoring the ConversionRuleset blacklist. Every
@@ -387,7 +390,7 @@ other Mach-Os get a plain ad-hoc signature (pure-Go, Apple-format valid).
 compiled into __TEXT are rewritten too, with growing strings relocated into
 a __PATCH_ROOTLESS segment. Scripts (DEBIAN control scripts plus any
 shebang payload file) get the same token-based path conversion upstream
-applies via RPScriptHandler — tokens are split on " \n\"={}" and converted
+applies via RPScriptHandler: tokens are split on " \n\"={}" and converted
 under /var/jb per the ConversionRuleset, with a double-conversion guard.
 Plists are not yet rewritten: WarnFixedPaths flags surviving rootful paths
 in them. Already-rootless packages are rebuilt unchanged.
@@ -425,9 +428,9 @@ func newRoothideCmd() *cobra.Command {
 		Use:   "roothide -i <rootless.deb> -o <roothide.deb> [--pkgmirror] [--mode auto|dynamic]",
 		Short: "convert a rootless .deb to a roothide-jailbreak one",
 		Long: `roothide converts a rootless jailbreak .deb (var/jb payload) to a
-roothide-jailbreak package, porting RootHidePatcher's patch.sh: the
-var/jb payload is hoisted to the package root, remaining system files move
-under rootfs/, every /var/jb/... load-command dependency and LC_RPATH is
+roothide-jailbreak package (the RootHidePatcher pipeline): the var/jb
+payload is hoisted to the package root, remaining system files move under
+rootfs/, every /var/jb/... load-command dependency and LC_RPATH is
 rewritten to @loader_path/.jbroot/..., the control file becomes
 iphoneos-arm64e, and preinst/prerm/postinst/postrm/extrainst_ scripts plus
 LaunchDaemons and libSandy plists get the same path translations. Every
@@ -492,10 +495,11 @@ func newCGenCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "cgen -o <out.cyan> [-f tweak ...] [--root-dylib dylib ...]",
 		Short: "generate a shareable .cyan config file",
-		Long: `cgen generates .cyan config files for reproducible IPA patching,
-matching the upstream cyan/pyzule-rw config format (config.json + inject/
-payloads). xkvm extension: --root-dylib marks an inject payload for the
-app-root @executable_path contract (dlopen-based tweaks like Regram).`,
+		Long: `cgen writes a .cyan config file (config.json + inject/ payloads) in
+the upstream cyan/pyzule-rw format, so you can reproduce an IPA patch
+later or share it. xkvm extension: --root-dylib marks an inject payload
+for the app-root @executable_path contract (dlopen-based tweaks like
+Regram).`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if output == "" {
