@@ -272,14 +272,18 @@ func TestWarnFixedPaths(t *testing.T) {
 		t.Fatalf("WarnFixedPaths: %v", err)
 	}
 	got := buf.String()
-	// Upstream's banner shape (patch.sh lines 341-347, spelling included).
-	if !strings.Contains(got, "*****fixed-paths-warnning*****") {
-		t.Fatalf("no fixed-paths warning emitted; output:\n%s", got)
+	// Byte-identical to upstream's echo -e output: the Mach-O dep gets a
+	// banner with NO `=>` line, the text plist gets `=>` + banner; no log
+	// prefix, no summary line (patch.sh lines 341-347, spelling included).
+	for _, block := range []string{
+		"*****fixed-paths-warnning*****\n/Library/MobileSubstrate/DynamicLibraries/Leftover.dylib\n*******************************",
+		"=> /var/jb/Library/PreferenceLoader/Preferences/Leftover.plist\n*****fixed-paths-warnning*****\n/Library/PreferenceLoader/Preferences/Leftover\n*******************************",
+	} {
+		if !strings.Contains(got, block) {
+			t.Errorf("expected the exact upstream advisory block %q; output:\n%s", block, got)
+		}
 	}
-	if !strings.Contains(got, "/Library/MobileSubstrate/DynamicLibraries/Leftover.dylib") {
-		t.Errorf("warning missing the surviving load-command dep; output:\n%s", got)
-	}
-	if !strings.Contains(got, "/Library/PreferenceLoader/Preferences/Leftover") {
-		t.Errorf("warning missing the surviving text-file path; output:\n%s", got)
+	if strings.Contains(got, "[?] *****fixed-paths-warnning") || strings.Contains(got, "fixed-paths:") {
+		t.Errorf("advisory must be raw (no [?] prefix) and have no xkvm summary line; output:\n%s", got)
 	}
 }

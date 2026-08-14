@@ -55,21 +55,22 @@ func TestRoothideWarnFixedPathsNonMachO(t *testing.T) {
 		t.Fatalf("ConvertToRoothide: %v", err)
 	}
 	got := buf.String()
-	// Upstream's banner shape: `=> <package-relative path>` (non-Mach-O
-	// only) then the "fixed-paths-warnning" block with each surviving string
-	// on its own line (patch.sh lines 341-347, spelling included). The paths
-	// are package-root-relative: the roothide hoist moved the payload up, so
-	// usr/lib/foo.conf (not var/jb/usr/lib/foo.conf).
-	if !strings.Contains(got, "=> /usr/lib/foo.conf") || !strings.Contains(got, "=> /usr/lib/asset.bin") {
-		t.Fatalf("expected the upstream `=> path` lines for both files; output:\n%s", got)
-	}
-	if n := strings.Count(got, "*****fixed-paths-warnning*****"); n != 2 {
-		t.Errorf("expected 2 fixed-paths banners (one per file); got %d. output:\n%s", n, got)
-	}
-	for _, want := range []string{"/var/jb/usr/bin/tool", "/var/jb/usr/bin/binary-tool"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("expected the surviving string %q in a banner; output:\n%s", want, got)
+	// The advisory is byte-identical to upstream's echo -e output (patch.sh
+	// lines 341-347): `=> <package-relative path>` (non-Mach-O only) then the
+	// "fixed-paths-warnning" block, NO log prefix, NO xkvm summary line. The
+	// paths are package-root-relative: the roothide hoist moved the payload
+	// up, so usr/lib/foo.conf (not var/jb/usr/lib/foo.conf). Assert the exact
+	// contiguous block bytes.
+	for _, block := range []string{
+		"=> /usr/lib/asset.bin\n*****fixed-paths-warnning*****\n/var/jb/usr/bin/binary-tool\n*******************************",
+		"=> /usr/lib/foo.conf\n*****fixed-paths-warnning*****\npath=/var/jb/usr/bin/tool\n*******************************",
+	} {
+		if !strings.Contains(got, block) {
+			t.Errorf("expected the exact upstream advisory block %q; output:\n%s", block, got)
 		}
+	}
+	if strings.Contains(got, "[?] *****fixed-paths-warnning") || strings.Contains(got, "fixed-paths:") {
+		t.Errorf("advisory must be raw (no [?] prefix) and have no xkvm summary line; output:\n%s", got)
 	}
 	for _, mustNot := range []string{"Localizable.strings", "icon.png", "/var/jb/usr/bin/strings-tool", "/var/jb/usr/bin/png-tool"} {
 		if strings.Contains(got, mustNot) {
@@ -123,11 +124,14 @@ func TestRoothideWarnFixedPathsMachOAudit(t *testing.T) {
 	// Exactly ONE warning: the surviving /var/jb dep. The rewritten
 	// .jbroot dep (and the informational rewrite log line mentioning it)
 	// must not appear in a warning — count the warning lines, not the log.
-	// Exactly ONE banner: the surviving /var/jb dep (Mach-O files get no `=>`
-	// line, matching upstream's elif). The rewritten .jbroot dep must not be
+	// Exactly ONE banner: the surviving /var/jb dep. Mach-O files get no `=>`
+	// line (upstream's elif), and the rewritten .jbroot dep must not be
 	// flagged — a second flagged string would be a second banner.
 	if n := strings.Count(got, "*****fixed-paths-warnning*****"); n != 1 || !strings.Contains(got, "\n/var/jb\n") {
 		t.Fatalf("expected exactly 1 fixed-paths banner for the surviving /var/jb dep; got %d. output:\n%s", n, got)
+	}
+	if strings.Contains(got, "=> ") {
+		t.Errorf("Mach-O files get no `=>` line (upstream's elif); output:\n%s", got)
 	}
 	if strings.Contains(got, "\n/var/jb/Library/Frameworks") {
 		t.Errorf("audit flagged the rewritten .jbroot dep — it must only flag real survivors; output:\n%s", got)

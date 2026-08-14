@@ -65,3 +65,15 @@ func Promptf(format string, a ...any) {
 		fmt.Fprintf(infoWriter, "[<] %s\n", fmt.Sprintf(format, a...))
 	}
 }
+
+// Rawf writes to the info stream with NO level prefix, as a single line or
+// multi-line block. Used for output whose bytes must match an upstream
+// format exactly (e.g. the fixed-paths banner, which is byte-identical to
+// patch.sh's echo -e output). Still honors SetWriters and SetSilent.
+func Rawf(format string, a ...any) {
+	mu.Lock()
+	defer mu.Unlock()
+	if !silent {
+		fmt.Fprintln(infoWriter, fmt.Sprintf(format, a...))
+	}
+}

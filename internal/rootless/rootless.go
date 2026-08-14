@@ -604,25 +604,26 @@ var fixedPathRe = regexp.MustCompile(`/(?:Applications|Library|usr|var|etc|bin|s
 // warnFixedPathsBlock emits upstream's fixed-paths banner for one affected
 // file (patch.sh lines 341-347): the `=> <path>` line for non-Mach-O files
 // only (upstream's elif), then a single block with each surviving string on
-// its own line, closed by the asterisk line. The banner spelling
-// ("warnning") is upstream's; only the leading "[?]" log marker is xkvm's.
+// its own line, closed by the asterisk line. Emitted RAW (no "[?]" prefix)
+// so the advisory is byte-identical to upstream's echo -e output — banner
+// spelling ("warnning") included.
 func warnFixedPathsBlock(displayPath string, isMachO bool, strs []string) {
 	if !isMachO {
-		log.Warnf("=> %s", displayPath)
+		log.Rawf("=> %s", displayPath)
 	}
-	log.Warnf("*****fixed-paths-warnning*****\n%s\n*******************************", strings.Join(strs, "\n"))
+	log.Rawf("*****fixed-paths-warnning*****\n%s\n*******************************", strings.Join(strs, "\n"))
 }
 
 // WarnFixedPaths audits the converted payload for surviving rootful jailbreak
-// paths and warns about each one in upstream's "fixed-paths-warnning" banner
-// shape (the `strings | grep` scan output of patch.sh): Mach-O load commands
-// that ShouldConvert would still rewrite (a conversion miss), and absolute
-// jailbreak paths in non-Mach-O payload files (plists, scripts, configs —
-// the converter does not rewrite those). Paths that are correct to keep
-// rootful (Apple /usr/lib, /var/mobile user data, /System) are excluded by
-// the blacklist. The scan is informational, never fatal.
+// paths and reports each one as upstream's "fixed-paths-warnning" banner (the
+// `strings | grep` scan output of patch.sh, emitted byte-identical with no
+// log prefix): Mach-O load commands that ShouldConvert would still rewrite (a
+// conversion miss), and absolute jailbreak paths in non-Mach-O payload files
+// (plists, scripts, configs — the converter does not rewrite those). Paths
+// that are correct to keep rootful (Apple /usr/lib, /var/mobile user data,
+// /System) are excluded by the blacklist. The scan is informational, never
+// fatal.
 func WarnFixedPaths(payload string) error {
-	warned := 0
 	err := filepath.WalkDir(payload, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -662,14 +663,10 @@ func WarnFixedPaths(payload string) error {
 			}
 		}
 		if len(strs) > 0 {
-			warned += len(strs)
 			warnFixedPathsBlock(displayPath, is, strs)
 		}
 		return nil
 	})
-	if warned > 0 {
-		log.Warnf("fixed-paths: %d path(s) survive the conversion — verify they are correct for rootless", warned)
-	}
 	return err
 }
 

@@ -751,10 +751,11 @@ func patchSandyPlist(data []byte) []byte {
 // strings and warns about each — upstream's "fixed-paths-warning", whose
 // `strings | grep /var/jb` runs over the SAME walked file set as the patch
 // loop (patch.sh lines 287/340), so non-Mach-O payload files are covered
-// too, not just Mach-O __cstring. Warnings are emitted in upstream's banner
-// shape (patch.sh lines 341-347): a `=> <path>` line for non-Mach-O files
-// only, then a `*****fixed-paths-warnning*****` block with each surviving
-// string on its own line — upstream's spelling included. In detail:
+// too, not just Mach-O __cstring. The advisory is emitted byte-identical to
+// upstream's echo -e output (patch.sh lines 341-347), with no log prefix: a
+// `=> <path>` line for non-Mach-O files only, then a
+// `*****fixed-paths-warnning*****` block with each surviving string on its
+// own line — upstream's spelling included. In detail:
 //
 //   - Mach-O: __cstring strings (string tables are not rewritten by the
 //     roothide pass), plus a load-command audit — a surviving /var/jb
@@ -768,7 +769,6 @@ func patchSandyPlist(data []byte) []byte {
 //
 // Informational, never fatal.
 func warnRoothideFixedPaths(dir string) error {
-	warned := 0
 	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -832,16 +832,12 @@ func warnRoothideFixedPaths(dir string) error {
 			}
 		}
 		if len(strs) > 0 {
-			warned += len(strs)
 			// Display path package-relative with the leading slash, matching
 			// upstream's fpath; the payload already carries var/jb in rel.
 			warnFixedPathsBlock("/"+rel, is, strs)
 		}
 		return nil
 	})
-	if warned > 0 {
-		log.Warnf("fixed-paths: %d /var/jb string(s) survive — verify against the roothide runtime", warned)
-	}
 	return err
 }
 
