@@ -68,7 +68,7 @@ func (u *UI) Start() {
 		choice := u.readLine("\nwhat do you want to do? (type a number, or q to quit) ")
 		switch strings.ToLower(strings.TrimSpace(choice)) {
 		case "q", "quit", "exit":
-			u.say(anGreen, "bye! go make something cool 🧊")
+			u.say(anGreen, "bye! see you next time")
 			return
 		case "1", "inject", "i":
 			u.flowInject()
@@ -97,7 +97,7 @@ func (u *UI) menu() {
 	u.title("pick a tool")
 	fmt.Fprintln(u.Out, u.paint(anCyan, "  1. "+anBold+"inject")+"  —  put a tweak (dylib / deb / .cyan) into an app or .ipa")
 	fmt.Fprintln(u.Out, u.paint(anCyan, "  2. "+anBold+"extract")+" —  pull tweaks OUT of an app so you can reuse them")
-	fmt.Fprintln(u.Out, u.paint(anCyan, "  3. "+anBold+"convert")+" —  change a tweak package format (deb ↔ rootless ↔ roothide)")
+	fmt.Fprintln(u.Out, u.paint(anCyan, "  3. "+anBold+"convert")+" —  change a tweak package format (deb / rootless / roothide)")
 	fmt.Fprintln(u.Out, u.paint(anCyan, "  4. "+anBold+"build")+"   —  wrap a dylib into a shareable .deb or .cyan file")
 	fmt.Fprintln(u.Out, u.paint(anCyan, "  5. "+anBold+"check")+"   —  make sure an app's tweaks won't crash (missing files?)")
 	fmt.Fprintln(u.Out, u.paint(anCyan, "  6. "+anBold+"help")+"    —  plain-language guide + real command examples")
@@ -185,10 +185,10 @@ func (u *UI) showResult(out string, err error, okMsg string) {
 	}
 	fmt.Fprintln(u.Out)
 	if err != nil {
-		u.say(anRed, "✗ "+okMsg)
+		u.say(anRed, "[fail] "+okMsg)
 		u.say(anYellow, "  that didn't work — check the lines above, they usually say why.")
 	} else {
-		u.say(anGreen, "✓ "+okMsg)
+		u.say(anGreen, "[ok] "+okMsg)
 	}
 }
 

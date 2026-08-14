@@ -155,7 +155,7 @@ xKVM/
 │   │   ├── native.go             # pure-Go ops via go-macho/pkg/codesign (≈ insert_dylib/ldid/otool/lipo)
 │   │   ├── der.go                # entitlements DER encoder for ad-hoc signing (≈ ldid)
 │   │   └── sdk26.go              # LC_BUILD_VERSION.sdk → 26.0 (Liquid Glass patch)
-│   ├── fetch/                    # [M4 ✅] MobileAPT Packages parser + Canister client + dep recursion
+│   ├── fetch/                    # [M4 done] MobileAPT Packages parser + Canister client + dep recursion
 │   ├── cyanfile/                 # .cyan zip parse/generate (≈ parse_cyans + cgen)
 │   ├── extras/                   # go:embed of hooking frameworks + sideload-fix dylibs
 │   └── log/                      # `[*]`/`[?]`/`[!]`/`[<]` output formatter, --silent
@@ -189,26 +189,26 @@ Azule's `-m`=skip-hooking collides with cyan's `-m`=minOS; both resolved in cyan
 
 | Flag | Meaning (from cyan) | xKVM |
 |---|---|---|
-| `-i, --input` | app (.app/.ipa/.tipa) | ✔ |
-| `-o, --output` | output; default overwrite input | ✔ |
-| `-z, --cyan` | `.cyan` config file(s) | ✔ |
-| `-f` | tweak/item(s) to inject | ✔ (+ accept **repo package id** when `--fetch` used) |
-| `--root-dylib` (new) | inject dylib(s) to the **app root** with an `@executable_path` load command instead of Frameworks/`@rpath` — for dlopen-based tweaks (e.g. Regram) that resolve resources relative to `@executable_path` and crash when relocated to Frameworks; use together with `-f <same file>` to also carry the file into the injection set | ✔ |
-| `xkvm cgen -o out.cyan` (new, implemented) | generate a shareable `.cyan` config (`-f` payloads → `inject/`, `--root-dylib` marks app-root payloads, `-n`/`-s`/`--ellekit`/`--patch` baked) — upstream pyzule-rw cgen parity + the xkvm `root_dylibs` key | ✔ |
-| `xkvm cyan-check <file.cyan>...` (new, implemented) | validate `.cyan` config(s) **without applying**: read-only report of errors (root_dylibs↔payload mismatches, missing k/l/x payloads, unsafe paths, unknown patch names) and warnings (unknown keys, odd types); exit 1 on any error, 0 with warnings only | ✔ |
-| `xkvm extract -i <app> -o <dir>` (new, implemented) | dump tweak artifacts (dylibs/frameworks/bundles/appex) from an app/ipa/tipa **and write `xkvm-manifest.json`** recording each artifact's original placement; re-injecting those files honors it automatically (§5.3) | ✔ |
-| `xkvm check -i <app|ipa>` (new, implemented) | **merge-completeness check**: scan every bundle-relative load-command dependency (`@rpath/`/`@executable_path`/`@loader_path`) against the bundle's Frameworks/root inventory and report any unresolved reference — the ffmpegkit-gap detector; exit 1 on any missing | ✔ |
-| `xkvm tui` (new, implemented) | **friendly menu mode**: drives the exact same `internal/app` functions as the flags, but asks questions in plain words, animates work with a dependency-free block spinner (ANSI), captures log output per operation and renders a "what happened" panel. Degrades to a plain prompt when stdin is piped (`NO_COLOR` respected); zero new dependencies (`internal/tui`, §5.6) | ✔ |
-| `-n -v -b -m` | name / version / bundle id / minOS | ✔ |
-| `-k` | icon | ✔ (Go image, drops Pillow) |
-| `-l` | plist merge | ✔ |
-| `-x` | entitlements | ✔ |
-| `-u -w -d -s -q -e -g -c` | uisd / no-watch / documents / fakesign / thin / ext / enc-ext / compress-level | ✔ |
-| `--ignore-encrypted --overwrite` | | ✔ |
-| `--patch` (new) | inject the bundled sideload dylib set — App Store/keychain repairs + bundled tweaks (`zxPluginsInject`); implies `--fakesign` | ✔ |
-| `--ellekit` (new) | use the real ElleKit runtime: rewrite all legacy hooking spellings to `@rpath/ElleKit.framework/ElleKit`, auto-inject + thin the framework to the app's arch | ✔ (feather-ellekit) |
-| `--liquid-glass` / `--liquid-glass-compat` (new) | iOS 26 Liquid Glass compat patch: `UIDesignRequiresCompatibility` ± `LC_BUILD_VERSION.sdk → 26.0` (mutually exclusive) | ✔ (feather-ellekit) |
-| `--force-fullscreen` (new) | set `UIRequiresFullScreen=true` (sideloaded apps that break under Split View); template for future patches — the CLI binds flags automatically from the `internal/patch` registry | ✔ (feather-ellekit) |
+| `-i, --input` | app (.app/.ipa/.tipa) | yes |
+| `-o, --output` | output; default overwrite input | yes |
+| `-z, --cyan` | `.cyan` config file(s) | yes |
+| `-f` | tweak/item(s) to inject | yes (+ accept **repo package id** when `--fetch` used) |
+| `--root-dylib` (new) | inject dylib(s) to the **app root** with an `@executable_path` load command instead of Frameworks/`@rpath` — for dlopen-based tweaks (e.g. Regram) that resolve resources relative to `@executable_path` and crash when relocated to Frameworks; use together with `-f <same file>` to also carry the file into the injection set | yes |
+| `xkvm cgen -o out.cyan` (new, implemented) | generate a shareable `.cyan` config (`-f` payloads → `inject/`, `--root-dylib` marks app-root payloads, `-n`/`-s`/`--ellekit`/`--patch` baked) — upstream pyzule-rw cgen parity + the xkvm `root_dylibs` key | yes |
+| `xkvm cyan-check <file.cyan>...` (new, implemented) | validate `.cyan` config(s) **without applying**: read-only report of errors (root_dylibs<->payload mismatches, missing k/l/x payloads, unsafe paths, unknown patch names) and warnings (unknown keys, odd types); exit 1 on any error, 0 with warnings only | yes |
+| `xkvm extract -i <app> -o <dir>` (new, implemented) | dump tweak artifacts (dylibs/frameworks/bundles/appex) from an app/ipa/tipa **and write `xkvm-manifest.json`** recording each artifact's original placement; re-injecting those files honors it automatically (§5.3) | yes |
+| `xkvm check -i <app|ipa>` (new, implemented) | **merge-completeness check**: scan every bundle-relative load-command dependency (`@rpath/`/`@executable_path`/`@loader_path`) against the bundle's Frameworks/root inventory and report any unresolved reference — the ffmpegkit-gap detector; exit 1 on any missing | yes |
+| `xkvm tui` (new, implemented) | **friendly menu mode**: drives the exact same `internal/app` functions as the flags, but asks questions in plain words, animates work with a dependency-free block spinner (ANSI), captures log output per operation and renders a "what happened" panel. Degrades to a plain prompt when stdin is piped (`NO_COLOR` respected); zero new dependencies (`internal/tui`, §5.6) | yes |
+| `-n -v -b -m` | name / version / bundle id / minOS | yes |
+| `-k` | icon | yes (Go image, drops Pillow) |
+| `-l` | plist merge | yes |
+| `-x` | entitlements | yes |
+| `-u -w -d -s -q -e -g -c` | uisd / no-watch / documents / fakesign / thin / ext / enc-ext / compress-level | yes |
+| `--ignore-encrypted --overwrite` | | yes |
+| `--patch` (new) | inject the bundled sideload dylib set — App Store/keychain repairs + bundled tweaks (`zxPluginsInject`); implies `--fakesign` | yes |
+| `--ellekit` (new) | use the real ElleKit runtime: rewrite all legacy hooking spellings to `@rpath/ElleKit.framework/ElleKit`, auto-inject + thin the framework to the app's arch | yes (feather-ellekit) |
+| `--liquid-glass` / `--liquid-glass-compat` (new) | iOS 26 Liquid Glass compat patch: `UIDesignRequiresCompatibility` ± `LC_BUILD_VERSION.sdk → 26.0` (mutually exclusive) | yes (feather-ellekit) |
+| `--force-fullscreen` (new) | set `UIRequiresFullScreen=true` (sideloaded apps that break under Split View); template for future patches — the CLI binds flags automatically from the `internal/patch` registry | yes (feather-ellekit) |
 | `--fetch` (new) | fetch tweak by bundle id via Canister/MobileAPT | M4 |
 | `--apt-source, -A` (new) | extra repo URL(s) | M4 |
 | `--no-recurse` (new) | skip dependency recursion | M4 |
@@ -667,7 +667,7 @@ extract/copy app (.ipa → unzip-style, .tipa, .app)
 encryption check on main executable        (--ignore-encrypted overrides)
 parse .cyan config(s)                       → merge into args (inject/, icon, plist, entitlements)
 remove extensions (all | encrypted only)
-  ├─ [M4 ✅] fetch stage: resolve any -f entries that are repo bundle ids → .debs
+  ├─ [M4 done] fetch stage: resolve any -f entries that are repo bundle ids → .debs
   ├─ extract .debs                          (ar + data.tar.*, collect dylib/framework/appex/bundle)
   ├─ fix common dependencies (substrate→ElleKit, orion, cephei*)
   ├─ auto-inject missing hooking frameworks from extras/
@@ -721,8 +721,8 @@ repack .ipa (compression level, exclude hidden files) | emit .app
 | M0 | **Scaffold** | go.mod, cobra CLI (full flag surface), logging, exit codes, CI skeleton | 0.5 d | — |
 | M1 | **Containers** | `ipa`, `deb`, `plist` packages; extract/repack; `.app` in; compression level; golden tests | 1 d | M0 |
 | M2 | **Injection parity (hybrid)** | `macho/toolchain` embedding (**deleted** — superseded by M3); full `inject()` parity: dep fixing, extras auto-inject, entitlements, fakesign, thin, icon, watch/extensions, plist ops — **differential parity vs cyan** | 2–3 d | M1 |
-| M3 | **Pure-Go Mach-O** ✅ | insert_dylib → `macho/native`; ldid → `pkg/codesign`; otool→deps; lipo→thin; **fixes Linux/aarch64 LIEF hole**; the M2 toolchain embed was removed after M3 landed | 3–5 d | M2 |
-| M4 | **Azule fetch** ✅ | `fetch` package: MobileAPT + Canister + dep recursion; `xkvm --fetch`/`-A`/`--no-recurse`; live smoke test (Canister v4 + real repo) gated behind `XKVM_LIVE_FETCH=1` | 2–3 d | M1 |
+| M3 | **Pure-Go Mach-O** done | insert_dylib → `macho/native`; ldid → `pkg/codesign`; otool→deps; lipo→thin; **fixes Linux/aarch64 LIEF hole**; the M2 toolchain embed was removed after M3 landed | 3–5 d | M2 |
+| M4 | **Azule fetch** done | `fetch` package: MobileAPT + Canister + dep recursion; `xkvm --fetch`/`-A`/`--no-recurse`; live smoke test (Canister v4 + real repo) gated behind `XKVM_LIVE_FETCH=1` | 2–3 d | M1 |
 | M5 | **iOS on-device** | cross-compile `GOOS=darwin GOARCH=arm64`; `--decrypt` (ipatool + fouldecrypt variants); Roothide fs caveats documented | 1–2 d | M3 |
 | M6 | **Ship** | Homebrew tap, goreleaser release flow, shell completion, README, NOTICE/licenses | 1 d | M4/M5 |
 | FE | **Feather reference + ElleKit** | mode-keyed `commonDeps` (substrate vs real ElleKit runtime), libhooker auto-switch pre-scan, `internal/patch` registry + Liquid Glass patches, `BumpSDK26`, vendored fat ElleKit.framework, e2e-real patch stages [9/10]/[10/10] | 1 d | M3 |

@@ -15,9 +15,7 @@
 
 Inject tweaks into apps · extract them back out · convert jailbreak packages between formats.
 
-> 🎨 **New to xkvm? Run `xkvm tui`** — a colorful menu that asks questions in plain
-> words, animates work with a block spinner, and shows you what happened. No flags
-> to memorize: it drives the exact same engine as the command line.
+New here? Run `xkvm tui`. It asks the same questions the flags do, one at a time, and runs the exact same engine under the hood.
 
 [![CI](https://github.com/xscope0/xkvm-ios-injector/actions/workflows/ci.yml/badge.svg)](https://github.com/xscope0/xkvm-ios-injector/actions)
 [![Go](https://img.shields.io/badge/Go-1.26-blue)]()
@@ -29,38 +27,38 @@ Inject tweaks into apps · extract them back out · convert jailbreak packages b
 
 ## What is xkvm?
 
-xkvm is a command-line tool for people who sideload iOS apps. Give it an app (`.ipa`, `.tipa`, or `.app`) and a tweak, and it does the fiddly parts for you — no GUI, no clicking through wizards.
+xkvm is a command-line tool for sideloading iOS apps. Give it an app (`.ipa`, `.tipa`, or `.app`) and a tweak, and it handles the parts that are easy to get wrong: wiring the tweak so it loads, re-signing the result, and repacking the container.
 
 With xkvm you can:
 
-- **Inject tweaks into an app.** Add a tweak (`.dylib`, `.deb`, framework, or bundle) to an app, wire it up so it actually loads, and re-sign everything so the app still installs.
-- **Extract tweaks from an app.** Take a modified app you already have and pull the injected tweaks back out — dylibs, frameworks, bundles, app extensions.
-- **Convert jailbreak packages.** Translate a tweak package between the three major jailbreak styles — *rootful* (classic), *rootless* (modern `/var/jb`), and *roothide* (jbroot) — and between `.deb` and `.dylib` forms.
+- **Inject tweaks into an app.** Add a tweak (`.dylib`, `.deb`, framework, or bundle), wire it up so it loads, and re-sign everything so the app still installs.
+- **Extract tweaks from an app.** Pull the injected tweaks out of a modified app: dylibs, frameworks, bundles, app extensions.
+- **Convert jailbreak packages.** Translate a tweak package between the three jailbreak styles: *rootful* (classic), *rootless* (modern `/var/jb`), and *roothide* (jbroot), and between `.deb` and `.dylib` forms.
 - **Fetch tweaks from Cydia repos.** Resolve a tweak by its bundle id through Canister / MobileAPT, including its dependencies.
-- **Fix sideloading problems.** Inject a bundled set of App Store / keychain repair dylibs and apply compatibility patches to apps that misbehave when sideloaded.
+- **Fix sideloading problems.** Inject a bundled set of App Store and keychain repair dylibs, and apply compatibility patches to apps that misbehave when sideloaded.
 
-Everything is written in **Go**, with no external tools required for the heavy lifting. macOS is the primary platform; the core also builds and is tested on Linux.
+Everything is written in **Go**. No external tools are required for the heavy lifting. macOS is the primary platform; the core also builds and tests on Linux.
 
 ## Features
 
 | | |
 |---|---|
-| 🔧 **Tweak injection** | Add dylibs, debs, frameworks, and bundles to an app — with correct load commands (`@rpath`, `@executable_path`) and re-signing. |
-| 🧩 **Tweak extraction** | `xkvm extract` pulls every injected artifact back out of an app, recording where each one lived so re-injection is automatic. |
-| 🔁 **Package conversion** | Faithful ports of the ecosystem's own converters: rootful → rootless → roothide, and `.deb` ↔ `.dylib`. |
-| 📦 **Repo fetching** | `--fetch` resolves tweaks by bundle id through Canister / MobileAPT with dependency recursion. |
-| 📝 **Shareable configs** | `.cyan` files capture every option — generate them with `cgen`, validate them with `cyan-check`, apply them with `-z`. |
-| 🩹 **Sideload fixes** | `--patch` injects the bundled sideload-repair dylib set; `--ellekit` swaps in the real ElleKit hooking runtime. |
-| ✅ **Completeness checks** | `xkvm check` verifies every bundle-relative dependency resolves — so merged tweaks don't crash at launch. |
-| 🧼 **Deterministic builds** | Same input, same output — with zip-slip-safe extraction and pure-Go Apple-format code signatures. |
+| **Tweak injection** | Add dylibs, debs, frameworks, and bundles to an app, with correct load commands (`@rpath`, `@executable_path`) and re-signing. |
+| **Tweak extraction** | `xkvm extract` pulls every injected artifact back out of an app, recording where each one lived so re-injection is automatic. |
+| **Package conversion** | Ports of the ecosystem's own converters: rootful → rootless → roothide, and `.deb` to `.dylib`. |
+| **Repo fetching** | `--fetch` resolves tweaks by bundle id through Canister / MobileAPT, with dependency recursion. |
+| **Shareable configs** | `.cyan` files capture every option: generate with `cgen`, validate with `cyan-check`, apply with `-z`. |
+| **Sideload fixes** | `--patch` injects the bundled sideload-repair dylib set; `--ellekit` swaps in the real ElleKit hooking runtime. |
+| **Completeness checks** | `xkvm check` verifies every bundle-relative dependency resolves, so merged tweaks don't crash at launch. |
+| **Deterministic builds** | Same input, same output, with zip-slip-safe extraction and pure-Go Apple-format code signatures. |
 
-## Try it in 30 seconds
+## First run
 
 ```bash
-xkvm tui          # the friendly menu — pick "inject", answer the questions
+xkvm tui          # menu mode: answer the questions, no flags to remember
 ```
 
-Or go straight to the command line:
+Or straight to the command line:
 
 ```bash
 xkvm -i App.ipa -f MyTweak.dylib -o App-Tweaked.ipa   # inject a tweak
@@ -68,8 +66,6 @@ xkvm extract -i App-Tweaked.ipa -o tweaks/            # pull tweaks back out
 xkvm rootless -i tweak.deb -o tweak-rootless.deb      # convert a package
 xkvm check -i App-Tweaked.ipa                         # find missing files before you install
 ```
-
-Every menu screen ends with the equivalent command, so the TUI doubles as a teacher.
 
 ## Installation
 
@@ -176,13 +172,13 @@ Run `xkvm --help` for the complete list.
 
 | Milestone | Content | Status |
 |---|---|---|
-| M0 | Scaffold: CLI, logging, CI | ✅ |
-| M1 | Containers: ipa/deb/plist, extract command | ✅ |
-| M2 | Injection parity (hybrid toolchain) | ✅ (superseded by M3) |
-| M3 | Pure-Go Mach-O (go-macho / codesign) | ✅ |
-| M4 | Azule fetch: Canister / MobileAPT | ✅ |
-| M5 | iOS on-device: decrypt, cross-compile | ⬜ planned |
-| M6 | Ship: brew tap, releases, docs | ⬜ planned |
+| M0 | Scaffold: CLI, logging, CI | done |
+| M1 | Containers: ipa/deb/plist, extract command | done |
+| M2 | Injection parity (hybrid toolchain) | done (superseded by M3) |
+| M3 | Pure-Go Mach-O (go-macho / codesign) | done |
+| M4 | Azule fetch: Canister / MobileAPT | done |
+| M5 | iOS on-device: decrypt, cross-compile | planned |
+| M6 | Ship: brew tap, releases, docs | planned |
 
 ## Contributing
 
