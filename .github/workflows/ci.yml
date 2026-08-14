@@ -60,6 +60,16 @@ jobs:
       - name: Rpath byte-identical (verbose)
         if: matrix.os == 'macos-14'
         run: go test -race -v ./internal/macho/ -run TestRpathByteIdentical32
+      # Script-sed golden (pure Go — runs on every leg in the suite-wide
+      # step). Pins patchScriptPaths byte-for-byte against upstream
+      # RootHidePatcher's verified output on a fixture exercising EVERY
+      # firing pattern (iphoneos-arm64, /var/jb/ strip, bare /var/jb
+      # round-trip, all ten space-anchored /rootfs/ rewrites, DIR=) plus the
+      # space-anchored non-fire cases. Verbose re-run so the byte-level
+      # assertions land in the log.
+      - name: Script-sed golden (verbose)
+        if: matrix.os == 'macos-14'
+        run: go test -race -v ./internal/rootless/ -run TestPatchScriptPathsGoldenUpstream
       # Pkgmirror install contract (macos-14 only — builds a rootless
       # fixture with the native toolchain). Pins both consumption paths of
       # --pkgmirror: the dpkg-installable .deb (edited control, patched
