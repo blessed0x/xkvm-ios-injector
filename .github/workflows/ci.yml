@@ -53,6 +53,13 @@ jobs:
       - name: TweakInject golden (verbose)
         if: matrix.os == 'macos-14'
         run: go test -race -v ./internal/rootless/ -run TestTweakInjectGoldenShadow
+      # Byte-identical LC_RPATH serializer pin (macos-14 only — builds a
+      # synthetic thin armv7 dylib with the iPhoneOS SDK). Same non-verbose
+      # gap as the goldens above: re-run with -v so the byte-level rpath
+      # assertions (and the 4-mod-8 precondition) are visible per push.
+      - name: Rpath byte-identical (verbose)
+        if: matrix.os == 'macos-14'
+        run: go test -race -v ./internal/macho/ -run TestRpathByteIdentical32
       # Generality smoke (macos-14 only, needs go + Xcode for Mach-O
       # fixtures): build ten hermetic fixture IPAs with fully generic names
       # and assert xkvm check's exit code on each — the same sweep that ran
