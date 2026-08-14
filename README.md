@@ -15,6 +15,10 @@
 
 Inject tweaks into apps · extract them back out · convert jailbreak packages between formats.
 
+> 🎨 **New to xkvm? Run `xkvm tui`** — a colorful menu that asks questions in plain
+> words, animates work with a block spinner, and shows you what happened. No flags
+> to memorize: it drives the exact same engine as the command line.
+
 [![CI](https://github.com/xscope0/xkvm-ios-injector/actions/workflows/ci.yml/badge.svg)](https://github.com/xscope0/xkvm-ios-injector/actions)
 [![Go](https://img.shields.io/badge/Go-1.26-blue)]()
 [![License: MIT](https://img.shields.io/github/license/xscope0/xkvm-ios-injector)](LICENSE)
@@ -49,6 +53,23 @@ Everything is written in **Go**, with no external tools required for the heavy l
 | 🩹 **Sideload fixes** | `--patch` injects the bundled sideload-repair dylib set; `--ellekit` swaps in the real ElleKit hooking runtime. |
 | ✅ **Completeness checks** | `xkvm check` verifies every bundle-relative dependency resolves — so merged tweaks don't crash at launch. |
 | 🧼 **Deterministic builds** | Same input, same output — with zip-slip-safe extraction and pure-Go Apple-format code signatures. |
+
+## Try it in 30 seconds
+
+```bash
+xkvm tui          # the friendly menu — pick "inject", answer the questions
+```
+
+Or go straight to the command line:
+
+```bash
+xkvm -i App.ipa -f MyTweak.dylib -o App-Tweaked.ipa   # inject a tweak
+xkvm extract -i App-Tweaked.ipa -o tweaks/            # pull tweaks back out
+xkvm rootless -i tweak.deb -o tweak-rootless.deb      # convert a package
+xkvm check -i App-Tweaked.ipa                         # find missing files before you install
+```
+
+Every menu screen ends with the equivalent command, so the TUI doubles as a teacher.
 
 ## Installation
 

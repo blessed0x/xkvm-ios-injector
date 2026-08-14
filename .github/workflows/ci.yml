@@ -88,6 +88,18 @@ jobs:
       # payload) vs the reference snapshot (original control, byte-complete
       # unpatched payload, 0755 modes, no self-nesting). Verbose re-run so
       # the per-test PASS lands in the log.
+      # TUI menu (pure Go — runs on every leg in the suite-wide step).
+      # Pipes menu input through the interactive UI and pins the help/about
+      # screens, menu dispatch, error surfacing, and graceful quit.
+      - name: TUI menu (verbose)
+        if: matrix.os == 'macos-14'
+        run: go test -race -v ./internal/tui/
+      # Pkgmirror install contract (macos-14 only — builds a rootless
+      # fixture with the native toolchain). Pins both consumption paths of
+      # --pkgmirror: the dpkg-installable .deb (edited control, patched
+      # payload) vs the reference snapshot (original control, byte-complete
+      # unpatched payload, 0755 modes, no self-nesting). Verbose re-run so
+      # the per-test PASS lands in the log.
       - name: Pkgmirror install contract (verbose)
         if: matrix.os == 'macos-14'
         run: go test -race -v ./internal/rootless/ -run TestPkgmirrorInstallContract

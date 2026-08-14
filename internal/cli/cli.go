@@ -14,6 +14,7 @@ import (
 	"github.com/xscope0/xkvm-ios-injector/internal/cyanfile"
 	"github.com/xscope0/xkvm-ios-injector/internal/log"
 	"github.com/xscope0/xkvm-ios-injector/internal/patch"
+	"github.com/xscope0/xkvm-ios-injector/internal/tui"
 )
 
 // Runner is the injectable pipeline entry point. Tests replace it with a
@@ -43,11 +44,20 @@ func NewRootCmd(run Runner) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "xkvm [flags] -i <app>",
 		Short: "iOS app modifier & tweak injector (cyan + Azule heritage, in Go)",
-		Long: `xkvm is a Go rewrite merging pyzule-rw/cyan (app modification and tweak
-injection) with Azule's repo fetching and App Store decryption.
+		Long: `xkvm is a friendly toolbox for iOS apps: it puts tweaks (small programs
+that change how an app behaves) inside .ipa files, pulls them back out,
+and converts tweak packages between the formats different jailbreaks use.
 
-Flag names and semantics are cyan-compatible. All modification flags apply to
-the -i input; the result is written to -o, or overwrites the input.`,
+Not sure where to start? Run 'xkvm tui' for a menu that asks questions in
+plain words. Or use the command line:
+
+  xkvm -i App.ipa -f MyTweak.dylib -o App-Tweaked.ipa   inject a tweak
+  xkvm extract -i App.ipa -o tweaks/                   pull tweaks out
+  xkvm rootless -i tweak.deb -o tweak-rootless.deb     convert a package
+  xkvm check -i App-Tweaked.ipa                        find missing files
+
+Flag names and semantics are cyan-compatible. All modification flags apply
+to the -i input; the result is written to -o, or overwrites the input.`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		// cyan's argparse uses nargs="+", so space-separated values after a
@@ -119,6 +129,7 @@ the -i input; the result is written to -o, or overwrites the input.`,
 	f.StringArrayVar(&opts.Decrypt, "decrypt", nil, "iOS only: decrypt an App Store app (apple-id password; values may be space-separated)")
 	f.StringVarP(&opts.Country, "country", "C", "", "country code for ipatool / iTunes lookup")
 
+	cmd.AddCommand(newTUICmd())
 	cmd.AddCommand(newCGenCmd())
 	cmd.AddCommand(newExtractCmd())
 	cmd.AddCommand(newCyanCheckCmd())
@@ -161,6 +172,28 @@ func collectTrailingArgs(cmd *cobra.Command, opts *app.Options, args []string) {
 		opts.Cyans = append(opts.Cyans, args...)
 	default:
 		opts.Files = append(opts.Files, args...)
+	}
+}
+
+// newTUICmd is the friendly menu mode: it drives the same internal/app
+// functions the flags do, but asks questions in plain words and animates
+// work with a block-art spinner. Zero dependencies; degrades to a plain
+// prompt when stdin is piped.
+func newTUICmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "tui",
+		Short: "friendly menu mode — asks questions in plain words (great for beginners)",
+		Long: `tui is the friendliest way to use xkvm: a colorful menu that explains
+each tool in plain words, asks you one question at a time ("which app do
+you want to tweak?"), animates work with a block spinner, and shows you
+what happened. It drives the exact same engine as the command line — no
+separate behavior. Tip: run 'xkvm tui' when you're not sure which flags
+you need; the menu teaches you the command for next time.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			tui.New().Start()
+			return nil
+		},
 	}
 }
 

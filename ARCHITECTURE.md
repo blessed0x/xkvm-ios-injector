@@ -198,6 +198,7 @@ Azule's `-m`=skip-hooking collides with cyan's `-m`=minOS; both resolved in cyan
 | `xkvm cyan-check <file.cyan>...` (new, implemented) | validate `.cyan` config(s) **without applying**: read-only report of errors (root_dylibs↔payload mismatches, missing k/l/x payloads, unsafe paths, unknown patch names) and warnings (unknown keys, odd types); exit 1 on any error, 0 with warnings only | ✔ |
 | `xkvm extract -i <app> -o <dir>` (new, implemented) | dump tweak artifacts (dylibs/frameworks/bundles/appex) from an app/ipa/tipa **and write `xkvm-manifest.json`** recording each artifact's original placement; re-injecting those files honors it automatically (§5.3) | ✔ |
 | `xkvm check -i <app|ipa>` (new, implemented) | **merge-completeness check**: scan every bundle-relative load-command dependency (`@rpath/`/`@executable_path`/`@loader_path`) against the bundle's Frameworks/root inventory and report any unresolved reference — the ffmpegkit-gap detector; exit 1 on any missing | ✔ |
+| `xkvm tui` (new, implemented) | **friendly menu mode**: drives the exact same `internal/app` functions as the flags, but asks questions in plain words, animates work with a dependency-free block spinner (ANSI), captures log output per operation and renders a "what happened" panel. Degrades to a plain prompt when stdin is piped (`NO_COLOR` respected); zero new dependencies (`internal/tui`, §5.6) | ✔ |
 | `-n -v -b -m` | name / version / bundle id / minOS | ✔ |
 | `-k` | icon | ✔ (Go image, drops Pillow) |
 | `-l` | plist merge | ✔ |
@@ -331,6 +332,32 @@ Implemented in `internal/artifact/manifest.go` (types + read/write) and
 `internal/app/run.go` (`ExtractArtifacts` writes; `rootDylibsFromManifests` reads).
 Pinned by `TestExtractReinjectHonorsPlacement` (full extract → re-inject round-trip on real
 Mach-O fixtures: `@executable_path` restored with no `--root-dylib`).
+
+### 5.6 TUI (`xkvm tui`)
+
+A dependency-free interactive menu that drives the **same** `internal/app` entry
+points the flags use — no separate code path, so the TUI can't drift from the
+CLI. Design decisions:
+
+- **Zero dependencies.** ANSI 16-color codes (basic colors work in every
+  terminal) + block characters (`▏▎▍…█` spinner, `█░` grow bar). No tcell,
+  no bubbletea, no `golang.org/x/term` — `isTerminal` is a `ModeCharDevice`
+  stat check. This keeps the single-static-binary story intact.
+- **Pipable.** When stdin isn't a terminal, animation and color turn off
+  (`NO_COLOR` respected) and the menu reads lines from the pipe — so CI and
+  scripts can drive it, and tests feed it `bufio` input directly
+  (`NewForTest` + an injectable `Run`).
+- **Log capture.** Each operation redirects the `internal/log` writers into a
+  buffer (`captureLogs`), runs the spinner, then renders a "what happened"
+  panel — the user sees the exact same `[*]`/`[?]`/`[!]` lines the CLI emits.
+- **Error surfacing.** A plain returned error (nothing logged) is folded into
+  the panel so failures always say why.
+- **Sensible defaults.** Inject defaults `--fakesign` on (every sideload path
+  needs a signature) and asks about `--patch` in plain words.
+
+Coverage: `internal/tui/tui_test.go` pipes menu input through the full loop
+(help/about screens, inject dispatch incl. options wiring, error path, bad
+choice, quit) and is in the CI verbose step.
 
 ### 5.3 Compatibility-patch registry (xkvm-native extension point)
 
