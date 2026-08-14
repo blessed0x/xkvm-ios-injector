@@ -391,6 +391,103 @@ func TestRootfulRoundTripStandard(t *testing.T) {
 	}
 }
 
+// TestRootfulRoundTripTweakInject converts Shadow rootful -> rootless with
+// --tweakinject (the Derootifier conventions) -> rootful. This exercises the
+// @rpath install-name resolution path: the tweakinject forward moved the
+// payload to usr/lib/TweakInject and set the install name to
+// @rpath/Shadow.dylib, so the reverse must resolve that basename against the
+// hoisted package and land on /usr/lib/TweakInject/Shadow.dylib (NOT the
+// legacy /Library/MobileSubstrate path — the discriminator that proves the
+// resolver, not a hardcoded guess, produced it). The /usr/lib rpath is kept
+// (harmless rootful; the reverse only removes /var/jb ones). Pure Go on the
+// committed fixture, so it runs on every CI leg.
+func TestRootfulRoundTripTweakInject(t *testing.T) {
+	silentLogs(t)
+	tmp := t.TempDir()
+	fixture, err := filepath.Abs(goldenShadowDeb)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ti := filepath.Join(tmp, "shadow-tweakinject.deb")
+	if err := Convert(fixture, ti, false, true); err != nil {
+		t.Fatalf("Convert(tweakinject): %v", err)
+	}
+	rootful := filepath.Join(tmp, "shadow-rootful.deb")
+	if err := ConvertToRootful(ti, rootful); err != nil {
+		t.Fatalf("ConvertToRootful: %v", err)
+	}
+	unpacked := filepath.Join(tmp, "unpacked")
+	if err := deb.Unpack(rootful, unpacked); err != nil {
+		t.Fatal(err)
+	}
+
+	// --- Payload hoisted, still in the TweakInject layout at the root ---
+	dylib := filepath.Join(unpacked, "usr", "lib", "TweakInject", "Shadow.dylib")
+	if _, err := os.Stat(dylib); err != nil {
+		t.Fatalf("payload missing at usr/lib/TweakInject/Shadow.dylib: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(unpacked, "var")); err == nil {
+		t.Error("empty var/ dir still present after hoist")
+	}
+
+	b := macho.Bin{Path: dylib}
+
+	// --- The @rpath install name resolved against the package ---
+	id, err := b.InstallName()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id != "/usr/lib/TweakInject/Shadow.dylib" {
+		t.Errorf("install name = %q, want /usr/lib/TweakInject/Shadow.dylib (resolved from @rpath/Shadow.dylib)", id)
+	}
+
+	// --- Deps restored: substrate shim, /var/jb prefixes, /System untouched ---
+	deps, err := b.AllDependencies()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(deps, "\n")
+	for _, want := range []string{
+		"/Library/Frameworks/CydiaSubstrate.framework/CydiaSubstrate", // shim restored
+		"/Library/Frameworks/Cephei.framework/Cephei",                 // /var/jb/Library/... stripped
+		"/usr/lib/librocketbootstrap.dylib",                           // /var/jb/usr/lib stripped
+		"/System/Library/Frameworks/Foundation.framework/Foundation",  // never converted by tweakinject
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("deps missing %q; got:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "/var/jb/") {
+		t.Errorf("deps still carry /var/jb paths; got:\n%s", got)
+	}
+	if strings.Contains(got, "@rpath/libsubstrate.dylib") {
+		t.Errorf("substrate shim not restored; got:\n%s", got)
+	}
+
+	// --- Rpaths: the /var/jb one removed, /usr/lib kept ---
+	rpaths, err := b.Rpaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(rpaths, " ") != "/usr/lib" {
+		t.Errorf("rpaths = %v, want [/usr/lib]", rpaths)
+	}
+
+	// --- Control reverted ---
+	ctlData, err := os.ReadFile(filepath.Join(unpacked, "DEBIAN", "control"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctl := string(ctlData)
+	if !strings.Contains(ctl, "Architecture: iphoneos-arm") {
+		t.Errorf("control missing iphoneos-arm; got:\n%s", ctl)
+	}
+	if strings.Contains(ctl, RuntimeDep) {
+		t.Errorf("control still carries the rootless runtime dependency; got:\n%s", ctl)
+	}
+}
+
 // TestConvertToRootfulAlreadyRootful: a deb whose payload is already rootful
 // (no var/jb) is skipped cleanly, mirroring the forward converters' skip.
 func TestConvertToRootfulAlreadyRootful(t *testing.T) {
