@@ -10,3 +10,10 @@
 /*.tipa
 /*.deb
 /*.app
+
+# Stray binary from a local `go build -o xkvm` — never commit build output.
+/xkvm
+
+# Session scratch dirs — never commit.
+/.omc/
+/.verifydriver/
