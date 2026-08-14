@@ -45,6 +45,14 @@ jobs:
       - name: Golden test (verbose)
         if: matrix.os == 'macos-14'
         run: go test -race -v ./internal/app/ -run TestCyanCheckGoldenExtractedSet
+      # TweakInject golden test against the committed real Shadow deb
+      # (testdata/fixtures/debs/). Not native-gated — the whole Convert
+      # pipeline is pure Go — so it also runs inside the suite-wide Test
+      # step above on both legs; the verbose re-run proves the golden
+      # armv7 layout assertions actually executed here.
+      - name: TweakInject golden (verbose)
+        if: matrix.os == 'macos-14'
+        run: go test -race -v ./internal/rootless/ -run TestTweakInjectGoldenShadow
       # Generality smoke (macos-14 only, needs go + Xcode for Mach-O
       # fixtures): build ten hermetic fixture IPAs with fully generic names
       # and assert xkvm check's exit code on each — the same sweep that ran
