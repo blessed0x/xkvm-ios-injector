@@ -569,15 +569,21 @@ const roothideEntitlements = `<?xml version="1.0" encoding="UTF-8"?>
 </dict>
 </plist>`
 
-// signMachOForRoothide ad-hoc signs a patched Mach-O, matching upstream's
-// ldid step (patch.sh): executables are signed with the roothide platform
-// entitlements — merged with any the binary already carried, so an existing
-// capability is never lost (upstream replaces; the merge is a deliberate
-// improvement) — and non-executables are signed plain ad-hoc with no
-// entitlements (upstream's `-S`). The pure-Go signature is Apple-format
-// valid (internal/macho/der.go), so the host's codesign accepts it — unlike
+// signMachOWithPlatformEnts ad-hoc signs a patched Mach-O, matching
+// upstream's ldid step in both patch.sh paths (roothide and Derootifier):
+// executables are signed with the roothide platform entitlements — merged
+// over any the binary already carried, so an existing capability is never
+// lost (upstream replaces; the merge is a deliberate improvement) — and
+// non-executables are signed plain ad-hoc with no entitlements (upstream's
+// `-S`). The pure-Go signature is Apple-format valid
+// (internal/macho/der.go), so the host's codesign accepts it — unlike
 // ldid's blob on macOS.
-func signMachOForRoothide(path, rel string) error {
+//
+// origEnts, when non-nil, is the binary's entitlements captured BEFORE the
+// caller stripped the signature (the rootless converter removes it before
+// editing); when nil the helper reads the still-present signature itself
+// (the roothide converter's flow).
+func signMachOWithPlatformEnts(path, rel string, origEnts []byte) error {
 	b := macho.Bin{Path: path}
 	exe, err := b.IsExecutable()
 	if err != nil {
@@ -585,7 +591,7 @@ func signMachOForRoothide(path, rel string) error {
 	}
 	var ents []byte
 	if exe {
-		ents, err = mergedRoothideEntitlements(b)
+		ents, err = mergedPlatformEntitlements(b, origEnts)
 		if err != nil {
 			return err
 		}
@@ -596,15 +602,21 @@ func signMachOForRoothide(path, rel string) error {
 	return nil
 }
 
-// mergedRoothideEntitlements returns the roothide platform base merged over
-// the binary's existing entitlements (roothide keys win, everything else is
-// preserved). An unreadable or absent existing signature yields just the
-// base — the input's own ldid blob is often unparseable by go-macho, and
-// the upstream reference replaces rather than merges anyway.
-func mergedRoothideEntitlements(b macho.Bin) ([]byte, error) {
+// mergedPlatformEntitlements returns the roothide platform base merged over
+// the binary's entitlements (roothide keys win, everything else preserved).
+// An unreadable or absent existing signature yields just the base — the
+// input's own ldid blob is often unparseable by go-macho, and the upstream
+// reference replaces rather than merges anyway.
+func mergedPlatformEntitlements(b macho.Bin, origEnts []byte) ([]byte, error) {
 	merged := plist.Dict{}
-	if orig, err := b.ExtractEntitlements(); err == nil {
-		if d, derr := plist.Decode(orig); derr != nil {
+	var existing []byte
+	if len(origEnts) > 0 {
+		existing = origEnts
+	} else if cur, err := b.ExtractEntitlements(); err == nil {
+		existing = cur
+	}
+	if len(existing) > 0 {
+		if d, derr := plist.Decode(existing); derr != nil {
 			return nil, fmt.Errorf("decoding existing entitlements: %w", derr)
 		} else {
 			merged = d
@@ -655,7 +667,7 @@ func patchMachOForRoothide(path, rel string) error {
 		}
 		patched++
 	}
-	if err := signMachOForRoothide(path, rel); err != nil {
+	if err := signMachOWithPlatformEnts(path, rel, nil); err != nil {
 		return err
 	}
 	log.Infof("patched Mach-O %s (%d path(s))", rel, patched)

@@ -345,11 +345,14 @@ rootless-patcher pipeline: the payload is repacked under var/jb, the control
 file gains iphoneos-arm64 + the rootless runtime dependency
 (cy+cpu.arm64v8 | oldabi-xina | oldabi), and Mach-O load-command dylib
 paths whose first component is a bootstrap root (/Library, /usr, ...) are
-rewritten under /var/jb honoring the ConversionRuleset blacklist.
-Code signatures are removed (rootless installs re-sign). --thin thins every
-Mach-O to arm64 (best-effort). Runtime dlopen strings compiled into __TEXT
-(CFString/data pointers) are NOT rewritten — the load-command layer is the
-supported boundary. Already-rootless packages are rebuilt unchanged.
+rewritten under /var/jb honoring the ConversionRuleset blacklist. Every
+converted Mach-O is re-signed like Derootifier's ldid step: executables get
+the roothide platform entitlements merged with any they already carried,
+other Mach-Os get a plain ad-hoc signature (pure-Go, Apple-format valid).
+--thin thins every Mach-O to arm64 (best-effort). Runtime dlopen strings
+compiled into __TEXT (CFString/data pointers) are NOT rewritten — the
+load-command layer is the supported boundary. Already-rootless packages
+are rebuilt unchanged.
 
 --tweakinject applies the modern Dopamine/ellekit conventions (ported from
 Derootifier): DynamicLibraries moves to usr/lib/TweakInject, CydiaSubstrate

@@ -465,12 +465,15 @@ func renderControl(entries []controlEntry) string {
 
 // convertMachOs walks payload (var/jb) and rewrites every Mach-O's
 // load-command dylib paths and install name under /var/jb per ShouldConvert.
-// Signatures are removed before editing (upstream RPCodesignHandler) — the
-// jailbreak's install path re-signs or tolerates unsigned binaries. When
-// tweakinject is set, converted CydiaSubstrate deps become
-// @rpath/libsubstrate.dylib, install names become @rpath/<basename>, and the
-// /usr/lib + /var/jb/usr/lib rpaths are added (Derootifier conventions).
-// Returns the number of rewritten paths.
+// The original signature is stripped before editing (the stale blob covers
+// the pre-edit content), and each Mach-O is then re-signed like
+// Derootifier's ldid step — executables get the roothide platform
+// entitlements merged over the captured original ones, others a plain
+// ad-hoc signature (see signMachOWithPlatformEnts). When tweakinject is
+// set, converted CydiaSubstrate deps become @rpath/libsubstrate.dylib,
+// install names become @rpath/<basename>, and the /usr/lib +
+// /var/jb/usr/lib rpaths are added (Derootifier conventions). Returns the
+// number of rewritten paths.
 func convertMachOs(payload string, thin, tweakinject bool) (int, error) {
 	converted := 0
 	err := filepath.WalkDir(payload, func(path string, d fs.DirEntry, err error) error {
@@ -495,6 +498,13 @@ func convertMachOs(payload string, thin, tweakinject bool) (int, error) {
 			}
 		}
 
+		// Capture the original entitlements BEFORE the strip: the merge at
+		// re-sign time reads them from this capture (the file is unsigned
+		// by then).
+		var origEnts []byte
+		if ents, err := b.ExtractEntitlements(); err == nil {
+			origEnts = ents
+		}
 		if err := b.RemoveSignature(); err != nil {
 			return fmt.Errorf("removing signature from %s: %w", rel, err)
 		}
@@ -553,6 +563,11 @@ func convertMachOs(payload string, thin, tweakinject bool) (int, error) {
 			log.Infof("rewrote %d __cstring string(s) of %s (%d in place, %d relocated)",
 				stats.InPlace+stats.Relocated, rel, stats.InPlace, stats.Relocated)
 			converted += stats.InPlace + stats.Relocated
+		}
+
+		// Re-sign after all edits, like Derootifier's ldid step.
+		if err := signMachOWithPlatformEnts(path, rel, origEnts); err != nil {
+			return err
 		}
 		return nil
 	})

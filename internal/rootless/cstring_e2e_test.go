@@ -140,11 +140,8 @@ func TestCStringDlopenRuntimeProof(t *testing.T) {
 		t.Fatalf("converted dylib missing at %s: %v", converted, err)
 	}
 
-	// The conversion removes the signature; re-sign ad-hoc so the host can
-	// load the rewritten binary (the re-sign never touches __TEXT strings).
-	if b, err := exec.Command("codesign", "-s", "-", converted).CombinedOutput(); err != nil {
-		t.Fatalf("codesign converted: %v: %s", err, b)
-	}
+	// The conversion re-signs ad-hoc (like Derootifier's ldid step), so the
+	// rewritten binary is already host-loadable — no post-conversion sign.
 
 	// The money assertion: at runtime, dlopen now tries the /var/jb path.
 	after := probe(t, converted)

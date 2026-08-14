@@ -113,14 +113,16 @@ jobs:
       # >/rootfs/ rewrite (Safari Plus, including the no-trailing-slash
       # quirk) and the jbroot-strip (AlbumManager's binary rootless
       # profile, whose /var/jb twin must NOT become /rootfs/var/jb).
-      # Roothide signing (native toolchain — real Mach-O fixtures built by
+      # Converter signing (native toolchain — real Mach-O fixtures built by
       # the host go toolchain, so macos-14 only; also covered by the
-      # suite-wide step there). Pins the upstream-matching ldid pass:
-      # executables get the roothide platform entitlements merged over any
-      # existing ones, non-executables get a plain ad-hoc signature.
-      - name: Roothide signing (verbose)
+      # suite-wide step there). Pins the upstream-matching ldid pass in both
+      # converters (roothide + Derootifier): executables get the roothide
+      # platform entitlements merged over any existing ones (including ones
+      # captured before the rootless path's early strip),
+      # non-executables get a plain ad-hoc signature.
+      - name: Converter signing (verbose)
         if: matrix.os == 'macos-14'
-        run: go test -race -v ./internal/rootless/ -run TestRoothideSigning
+        run: go test -race -v ./internal/rootless/ -run 'TestRoothideSigning|TestRootlessSigning'
       - name: Sandy golden real profiles (verbose)
         if: matrix.os == 'macos-14'
         run: go test -race -v ./internal/rootless/ -run 'TestSandyGoldenRealProfile|TestSandyGoldenRootlessProfile'

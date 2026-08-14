@@ -111,9 +111,11 @@ func TestTweakInjectGoldenShadow(t *testing.T) {
 	// otool reads from the converted binary — NOT go-macho's LoadSize()
 	// recomputation, which can differ from disk on real 32-bit binaries
 	// whose original cmdsize values were only 4-aligned. Values captured
-	// from the conversion of the committed fixture on 2026-08-14; if this
-	// table needs updating, diff against `otool -arch armv7 -l` on the
-	// converted dylib and update BOTH the table and this comment.
+	// from the conversion of the committed fixture on 2026-08-14 (the
+	// trailing LC_CODE_SIGNATURE appeared when the converter started
+	// re-signing like Derootifier's ldid step); if this table needs
+	// updating, diff against `otool -arch armv7 -l` on the converted dylib
+	// and update BOTH the table and this comment.
 	wantCmds := []struct {
 		cmd  uint32
 		size uint32
@@ -142,6 +144,7 @@ func TestTweakInjectGoldenShadow(t *testing.T) {
 		{0x29, 16},       // LC_DATA_IN_CODE
 		{0x8000001c, 24}, // LC_RPATH (/usr/lib)
 		{0x8000001c, 32}, // LC_RPATH (/var/jb/usr/lib)
+		{0x1d, 16},       // LC_CODE_SIGNATURE (re-signed like Derootifier's ldid step)
 	}
 	gotLayout := armv7CommandLayout(t, dylib)
 	if gotLayout == nil {

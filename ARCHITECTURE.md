@@ -425,13 +425,18 @@ the top). Already-rootless payloads are rebuilt unchanged (upstream's
 `cy+cpu.arm64v8 | oldabi-xina | oldabi`, an `Icon` path is converted.
 Upstream's Depends append is buggy (crashes on string Depends); xkvm
 appends correctly in all cases.
-3. **Mach-O** — signatures are removed (rootless installs re-sign), then
-every load-command dylib path and the LC_ID_DYLIB whose first path
-component is a bootstrap root (`Library`, `usr`, `var`, …) is rewritten
-under `/var/jb` via the existing growing-rename machinery
-(`ChangeDependency`/`SetInstallName`), honoring the ConversionRuleset
-blacklist and special cases. `@rpath`/`@executable_path` deps are never
-touched (their first component isn't a bootstrap root).
+3. **Mach-O** — the original signature is stripped before editing (its
+entitlements captured first), every load-command dylib path and the
+LC_ID_DYLIB whose first path component is a bootstrap root (`Library`,
+`usr`, `var`, …) is rewritten under `/var/jb` via the existing
+growing-rename machinery (`ChangeDependency`/`SetInstallName`), honoring
+the ConversionRuleset blacklist and special cases. `@rpath`/
+`@executable_path` deps are never touched (their first component isn't a
+bootstrap root). After all edits each Mach-O is **re-signed** like
+Derootifier's ldid step: executables get the roothide platform
+entitlements merged over the captured originals, others a plain ad-hoc
+signature (`signMachOWithPlatformEnts` — the same helper as `xkvm
+roothide`).
 4. **`__TEXT.__cstring` dlopen strings** — runtime paths compiled into the
 binary (the former documented boundary) are rewritten too
 (`internal/macho/cstring.go`). Strings that shrink or fit in place are
