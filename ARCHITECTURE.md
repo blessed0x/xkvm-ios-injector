@@ -482,7 +482,21 @@ tables are not rewritten by the roothide pass).
 
 `--pkgmirror` mirrors the (post-hoist) package to
 `var/mobile/Library/pkgmirror` with the control dir renamed
-`DEBIAN.<pkg>` for roothide's package manager.
+`DEBIAN.<pkg>` for roothide's package manager. The snapshot is taken
+**before** the control edits and the Mach-O patching, exactly where
+upstream's patch.sh copies it (its `$3` block precedes the control seds),
+and the mirror is excluded from the patch walk (upstream's `findcmd`
+excludes `*/var/mobile/Library/pkgmirror/*`). Consequences, pinned by
+`TestPkgmirrorInstallContract`:
+
+- the mirror's `DEBIAN.<pkg>/control` keeps the **input package's** fields
+  (the dynamic/auto edits only hit the real control);
+- the mirrored payload keeps its **original `/var/jb` load commands** — the
+  patched copies are what the .deb installs, the mirror is the reference
+  snapshot the roothide package manager reads (Bootstrap's
+  `fixMobileDirectories` skips it, preserving its ownership);
+- every mirror entry is `0755` (upstream's `chmod -R 0755`; ownership is
+  zeroed by the deb builder, so world-readable is the faithful equivalent).
 
 **Deviations from upstream (all documented, all intentional):**
 

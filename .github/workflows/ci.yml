@@ -60,6 +60,15 @@ jobs:
       - name: Rpath byte-identical (verbose)
         if: matrix.os == 'macos-14'
         run: go test -race -v ./internal/macho/ -run TestRpathByteIdentical32
+      # Pkgmirror install contract (macos-14 only — builds a rootless
+      # fixture with the native toolchain). Pins both consumption paths of
+      # --pkgmirror: the dpkg-installable .deb (edited control, patched
+      # payload) vs the reference snapshot (original control, byte-complete
+      # unpatched payload, 0755 modes, no self-nesting). Verbose re-run so
+      # the per-test PASS lands in the log.
+      - name: Pkgmirror install contract (verbose)
+        if: matrix.os == 'macos-14'
+        run: go test -race -v ./internal/rootless/ -run TestPkgmirrorInstallContract
       # Generality smoke (macos-14 only, needs go + Xcode for Mach-O
       # fixtures): build ten hermetic fixture IPAs with fully generic names
       # and assert xkvm check's exit code on each — the same sweep that ran

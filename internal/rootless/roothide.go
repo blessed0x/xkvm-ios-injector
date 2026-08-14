@@ -60,13 +60,21 @@ func ConvertToRoothide(input, output string, pkgmirror bool, mode string) error 
 	if err := hoistRootless(tmpdir); err != nil {
 		return err
 	}
-	if err := editControlRoothide(tmpdir, mode); err != nil {
-		return err
-	}
+	// The pkgmirror is a snapshot of the hoisted-but-unmodified package,
+	// taken BEFORE the control edits and the Mach-O patching — exactly
+	// where upstream's patch.sh copies it ($3 block, before the control
+	// seds). The mirror's DEBIAN.<pkg>/control therefore keeps the input
+	// package's original fields, and the mirrored payload keeps its
+	// original /var/jb load commands (patchPayloadForRoothide skips the
+	// mirror). This is the reference tool's observable output; the
+	// installable artifact is the real package, not the mirror.
 	if pkgmirror {
 		if err := makePkgMirror(tmpdir); err != nil {
 			return err
 		}
+	}
+	if err := editControlRoothide(tmpdir, mode); err != nil {
+		return err
 	}
 	if err := patchPayloadForRoothide(tmpdir); err != nil {
 		return err
@@ -265,6 +273,17 @@ func makePkgMirror(dir string) error {
 		}
 	}
 	if err := os.Rename(filepath.Join(mirror, "DEBIAN"), filepath.Join(mirror, "DEBIAN."+pkg)); err != nil {
+		return err
+	}
+	// Upstream chmods the whole mirror 0755 (mobile-owned, readable and
+	// writable by the package manager); ownership is zeroed by the deb
+	// builder, so world-readable 0755 is the faithful equivalent.
+	if err := filepath.WalkDir(mirror, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		return os.Chmod(path, 0o755)
+	}); err != nil {
 		return err
 	}
 	log.Infof("mirrored package to var/mobile/Library/pkgmirror (DEBIAN.%s)", pkg)
