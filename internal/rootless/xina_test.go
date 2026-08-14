@@ -19,6 +19,7 @@ import (
 	"github.com/xscope0/xkvm-ios-injector/internal/deb"
 	"github.com/xscope0/xkvm-ios-injector/internal/log"
 	"github.com/xscope0/xkvm-ios-injector/internal/macho"
+	"github.com/xscope0/xkvm-ios-injector/internal/testutil"
 )
 
 // countBytes returns how many times pat appears in the file at path.
@@ -414,9 +415,10 @@ func TestConvertToRootfulAlreadyRootful(t *testing.T) {
 // prove the NUL-anchored seds hit the runtime string (not just the fixture's
 // incidental string tables), and the rootful round trip restores it.
 func TestXinaStringTableSedsRuntimeProof(t *testing.T) {
-	if _, err := os.Stat("/usr/bin/clang"); err != nil {
-		t.Skip("clang not available")
-	}
+	// Same gate as TestCStringDlopenRuntimeProof: the fixture needs the
+	// darwin/arm64 clang (Linux clang has no -arch arm64 support), and the
+	// rewritten binary must be loadable on the host.
+	testutil.SkipUnlessNativeToolchain(t)
 	silentLogs(t)
 	tmp := t.TempDir()
 
