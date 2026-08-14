@@ -451,6 +451,25 @@ func convertMachOs(payload string, thin bool) (int, error) {
 			}
 			converted++
 		}
+
+		// __TEXT.__cstring dlopen strings: runtime paths compiled into the
+		// binary (the old documented boundary). Strings that grow under
+		// /var/jb are relocated into a __PATCH_ROOTLESS,__cstring segment
+		// with references retargeted (see internal/macho/cstring.go).
+		stats, err := macho.RewriteCStrings(path, func(s string) string {
+			if ShouldConvert(s) {
+				return ConvertString(s)
+			}
+			return ""
+		})
+		if err != nil {
+			return fmt.Errorf("rewriting __cstring of %s: %w", rel, err)
+		}
+		if stats.InPlace > 0 || stats.Relocated > 0 {
+			log.Infof("rewrote %d __cstring string(s) of %s (%d in place, %d relocated)",
+				stats.InPlace+stats.Relocated, rel, stats.InPlace, stats.Relocated)
+			converted += stats.InPlace + stats.Relocated
+		}
 		return nil
 	})
 	return converted, err

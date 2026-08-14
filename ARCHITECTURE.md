@@ -429,25 +429,53 @@ under `/var/jb` via the existing growing-rename machinery
 (`ChangeDependency`/`SetInstallName`), honoring the ConversionRuleset
 blacklist and special cases. `@rpath`/`@executable_path` deps are never
 touched (their first component isn't a bootstrap root).
+4. **`__TEXT.__cstring` dlopen strings** — runtime paths compiled into the
+binary (the former documented boundary) are rewritten too
+(`internal/macho/cstring.go`). Strings that shrink or fit in place are
+patched directly in the section; **growing** replacements are packed into
+a new `__PATCH_ROOTLESS,__cstring` segment inserted physically before
+`__LINKEDIT` (mapped after it in VM, matching upstream), every
+linkedit-referencing load command's offsets shift by the new segment size,
+and each reference — `__cfstring` table entries, `__DATA.__data` pointer
+slots, and ADRP/ADD + ADR instruction pairs in executable segments — is
+retargeted to the relocated string's VM address. Swift's hardcoded
+string-length MOVZ (16 bytes past the ADR) is patched to the new length.
 
-**Documented boundary (deviation):** upstream's string scanner rewrites
-`__TEXT.__cstring` + `__DATA.__data` strings with pointer patching
-(CFStrings, ADRP/ADD, chained-fixup aware) — Apple's `/usr/lib` libraries
-never appear there, so its blacklist omits them. xkvm converts the
-**load-command layer only**, where `libSystem.B.dylib` etc. DO appear, so the
-blacklist adds the Apple `/usr/lib` families (`libSystem`, `libobjc`,
-`libc++`, `libz`, `libsqlite3`, …) — a corrupted libc dependency would break
-the whole tweak, while a not-converted jailbreak lib merely keeps a rootful
-path (`xkvm check` can't yet see it — same as before conversion). Runtime
-dlopen strings compiled into `__TEXT` are out of scope; `--thin` thins every
-Mach-O to arm64 best-effort.
+**Deviations from upstream (all documented, all intentional):**
+
+- **Apple `/usr/lib` families are blacklisted.** Upstream never sees them in
+`__cstring`, but they DO appear in load commands — without the added
+`libSystem`/`libobjc`/`libc++`/`libz`/`libsqlite3`/… families, every
+converted dylib's `libSystem.B.dylib` dep would be corrupted. A corrupted
+libc dependency breaks the whole tweak; a not-converted jailbreak lib merely
+keeps a rootful path.
+- **Reference patching is arm64-only.** Upstream's assembler helpers are
+arm64-specific; x86_64 LEA RIP-relative refs are not retargeted, so
+non-arm64 slices get in-place rewrites only (and `--thin` exists for the
+common case).
+- **Chained-fixups growth is appended but orphaned.** The new
+`dyld_chained_starts_in_image` block covering `__PATCH_ROOTLESS` is written
+(and `__LINKEDIT` grows) but the header's `starts_offset` still points at
+the valid original — dyld keeps using it, matching upstream's behavior.
+- **Addresses are compared as full 64-bit VM values** (upstream mixes file
+and image-base spaces).
+
+**Runtime proof:** `TestCStringDlopenRuntimeProof` compiles a clang fixture
+dylib whose dlopen path lives in `__cstring`, converts it through the whole
+pipeline, loads the converted dylib via dyld, and asserts the dlerror names
+the `/var/jb` path — i.e. the rewritten string is what dlopen actually
+uses at runtime. The test is cgo-free (Go 1.26 removed cgo from `_test.go`
+files): the fixture is clang-built and the loader is a python3/ctypes
+subprocess, which exercises the same dyld path.
 
 **Tests** (all native-gated where they build Mach-Os): deb Build/Unpack
 round-trip incl. symlink-in-tar; ShouldConvert/ConvertString fidelity tables
 pinned against the upstream ruleset; `TestConvertEndToEnd` converts a real
 dylib with substrate-style weak deps and asserts converted + untouched load
 commands; app-level debify→undeb round trip with manifest; rootless-on-
-debify-output with `var/jb` layout + control assertions.
+debify-output with `var/jb` layout + control assertions; arm64
+ADRP/ADR/ADD/MOV encode/decode round trips; the `__cstring` runtime-proof
+test above.
 
 ---
 
