@@ -52,3 +52,11 @@ xkvm embeds (via `//go:embed all:extras`) third-party binaries and frameworks un
   reference for `xkvm roothide` (var/jb hoist + rootfs/ split, .jbroot
   load-command and rpath rewrites, control arm64e edits, script/plist path
   translations, pkgmirror); no code copied.
+
+## Test fixtures
+- **SafariPlus_FileAccess.plist** (`opa334/SafariPlus`, MIT): a real
+  production libSandy sandbox profile, committed as the golden fixture at
+  `testdata/fixtures/plists/` pinning the roothide `>/rootfs/` rewrite
+  against real data (see `internal/rootless/sandy_golden_test.go`). The
+  file is byte-identical to upstream (`master`, sha
+  `eebe8db49c44901c…`); the test asserts the sha.

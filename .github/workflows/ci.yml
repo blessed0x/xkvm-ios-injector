@@ -107,6 +107,13 @@ jobs:
       - name: Control handling sweep (verbose)
         if: matrix.os == 'macos-14'
         run: go test -race -v ./internal/rootless/ -run 'TestRoothideDSStoreCleanup|TestRoothideControlBlankLines|TestRoothideArchGate|TestRoothideHoistNoVar'
+      # Sandy golden vs the real Safari Plus profile (pure Go — also runs
+      # in the suite-wide Test step on both legs; verbose re-run for the
+      # log). Pins the >/rootfs/ rewrite on real production data, including
+      # the no-trailing-slash quirk.
+      - name: Sandy golden real profile (verbose)
+        if: matrix.os == 'macos-14'
+        run: go test -race -v ./internal/rootless/ -run TestSandyGoldenRealProfile
       # Generality smoke (macos-14 only, needs go + Xcode for Mach-O
       # fixtures): build ten hermetic fixture IPAs with fully generic names
       # and assert xkvm check's exit code on each — the same sweep that ran
