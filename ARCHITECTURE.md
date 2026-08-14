@@ -471,7 +471,12 @@ Pre-Depends.
 3. **Mach-O** — every `/var/jb/...` load-command dependency and LC_RPATH is
 rewritten to `@loader_path/.jbroot/...` (the roothide bootstrap lives inside
 each app's container at `.jbroot`, so the jailbreak is invisible to the
-app). Signatures are removed (deviation below).
+app). In `--mode auto`, every patched payload Mach-O also gains a sibling
+`<file>.roothidepatch` symlink to `/usr/lib/DynamicPatches/AutoPatches.dylib`
+(upstream's AutoPatches mechanism, unconditional per Mach-O — the roothide
+runtime applies the auto-patch treatment to binaries carrying such a
+sibling); `--mode dynamic` creates none. Signatures are removed (deviation
+below).
 4. **Scripts + plists** — the exact sed path translations upstream applies
 (`preinst`/`prerm`/`postinst`/`postrm`/`extrainst_`, LaunchDaemons and
 libSandy plists), ported with the /var/jb protect/unprotect dance order
@@ -487,14 +492,17 @@ tables are not rewritten by the roothide pass).
 upstream's patch.sh copies it (its `$3` block precedes the control seds),
 and the mirror is excluded from the patch walk (upstream's `findcmd`
 excludes `*/var/mobile/Library/pkgmirror/*`). Consequences, pinned by
-`TestPkgmirrorInstallContract`:
+`TestPkgmirrorInstallContract` and `TestRoothideAutoPatchesSymlinks`:
 
 - the mirror's `DEBIAN.<pkg>/control` keeps the **input package's** fields
   (the dynamic/auto edits only hit the real control);
-- the mirrored payload keeps its **original `/var/jb` load commands** — the
-  patched copies are what the .deb installs, the mirror is the reference
-  snapshot the roothide package manager reads (Bootstrap's
-  `fixMobileDirectories` skips it, preserving its ownership);
+- the mirrored payload keeps its **original `/var/jb` load commands** and
+  **no `.roothidepatch` symlinks** — the patched copies are what the .deb
+  installs, the mirror is the reference snapshot the roothide package
+  manager reads (Bootstrap's `fixMobileDirectories` skips it, preserving
+  its ownership);
+- any `DEBIAN/*.roothidepatch` files the input package ships are copied
+  into the mirror's control dir (upstream's `cp ... || true`, best-effort);
 - every mirror entry is `0755` (upstream's `chmod -R 0755`; ownership is
   zeroed by the deb builder, so world-readable is the faithful equivalent).
 

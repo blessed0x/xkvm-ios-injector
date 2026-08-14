@@ -69,6 +69,14 @@ jobs:
       - name: Pkgmirror install contract (verbose)
         if: matrix.os == 'macos-14'
         run: go test -race -v ./internal/rootless/ -run TestPkgmirrorInstallContract
+      # AutoPatches .roothidepatch symlink mechanism (macos-14 only —
+      # fixture built with the native toolchain). Pins the shipped data.tar
+      # symlinks: present for every payload Mach-O in --mode auto, absent
+      # for non-Mach-O files, dynamic and default modes, and the pkgmirror
+      # snapshot; plus the DEBIAN/*.roothidepatch mirror copy.
+      - name: AutoPatches symlinks (verbose)
+        if: matrix.os == 'macos-14'
+        run: go test -race -v ./internal/rootless/ -run TestRoothideAutoPatchesSymlinks
       # Generality smoke (macos-14 only, needs go + Xcode for Mach-O
       # fixtures): build ten hermetic fixture IPAs with fully generic names
       # and assert xkvm check's exit code on each — the same sweep that ran

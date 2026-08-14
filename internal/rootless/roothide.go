@@ -13,7 +13,10 @@ package rootless
 //     inside each app's container at .jbroot, so the jailbreak is invisible
 //     to the app); signatures are removed (documented deviation — upstream
 //     ldid-signs; the roothide install path signs or tolerates unsigned,
-//     matching xkvm's rootless converter contract)
+//     matching xkvm's rootless converter contract). In --mode auto, every
+//     patched Mach-O also gains a sibling .roothidepatch symlink to
+//     /usr/lib/DynamicPatches/AutoPatches.dylib (upstream's AutoPatches
+//     mechanism); --mode dynamic creates none.
 //  4. scripts + plists — the same sed path translations upstream applies
 //     (preinst/prerm/postinst/postrm/extrainst_, LaunchDaemons and libSandy
 //     plists)
@@ -21,11 +24,15 @@ package rootless
 //     __cstring sections are reported, exactly like upstream's scan
 //
 // --pkgmirror mirrors the package to var/mobile/Library/pkgmirror with the
-// control dir renamed DEBIAN.<pkg> for roothide's package manager. mode
-// ("", "auto", "dynamic") controls the Pre-Depends/version edits: "" adds
-// none (upstream's default without a mode argument), "auto" adds
-// rootless-compat(>= 0.9), "dynamic" adds a ~roothide version suffix and a
-// patches-<pkg>(= <ver>~roothide) Pre-Depends.
+// control dir renamed DEBIAN.<pkg> for roothide's package manager (plus any
+// DEBIAN/*.roothidepatch files the input ships, copied best-effort like
+// upstream's `cp ... || true`; the mirror never contains payload
+// .roothidepatch symlinks — it is a pre-patch snapshot). mode ("", "auto",
+// "dynamic") controls the Pre-Depends/version edits: "" adds none
+// (upstream's default without a mode argument), "auto" adds
+// rootless-compat(>= 0.9) plus the .roothidepatch symlinks above, "dynamic"
+// adds a ~roothide version suffix and a patches-<pkg>(= <ver>~roothide)
+// Pre-Depends.
 
 import (
 	"fmt"
@@ -42,6 +49,13 @@ import (
 
 // RoothideOutputArch is the architecture roothide packages are re-arch'd to.
 const RoothideOutputArch = "iphoneos-arm64e"
+
+// autoPatchesDylib is the DynamicPatches loader that roothide's AutoPatches
+// mechanism points at: in --mode auto every patched payload Mach-O gains a
+// sibling <file>.roothidepatch symlink to it, and the roothide runtime
+// applies the auto-patch treatment to any binary carrying such a sibling
+// (upstream patch.sh line 289; target verified against the reference).
+const autoPatchesDylib = "/usr/lib/DynamicPatches/AutoPatches.dylib"
 
 // ConvertToRoothide converts a rootless deb at input to a roothide deb at
 // output.
@@ -76,7 +90,7 @@ func ConvertToRoothide(input, output string, pkgmirror bool, mode string) error 
 	if err := editControlRoothide(tmpdir, mode); err != nil {
 		return err
 	}
-	if err := patchPayloadForRoothide(tmpdir); err != nil {
+	if err := patchPayloadForRoothide(tmpdir, mode); err != nil {
 		return err
 	}
 	if err := warnRoothideFixedPaths(tmpdir); err != nil {
@@ -275,6 +289,21 @@ func makePkgMirror(dir string) error {
 	if err := os.Rename(filepath.Join(mirror, "DEBIAN"), filepath.Join(mirror, "DEBIAN."+pkg)); err != nil {
 		return err
 	}
+	// Upstream copies any DEBIAN/*.roothidepatch files the input package
+	// ships into the mirror's control dir (patch.sh line 352, `|| true` —
+	// best-effort; usually empty).
+	if patches, err := filepath.Glob(filepath.Join(dir, "DEBIAN", "*.roothidepatch")); err == nil {
+		for _, p := range patches {
+			data, err := os.ReadFile(p)
+			if err != nil {
+				return err
+			}
+			if err := os.WriteFile(filepath.Join(mirror, "DEBIAN."+pkg, filepath.Base(p)), data, 0o755); err != nil {
+				return err
+			}
+			log.Infof("copied %s into pkgmirror", filepath.Base(p))
+		}
+	}
 	// Upstream chmods the whole mirror 0755 (mobile-owned, readable and
 	// writable by the package manager); ownership is zeroed by the deb
 	// builder, so world-readable 0755 is the faithful equivalent.
@@ -310,13 +339,20 @@ func copyTree(src, dst string) error {
 
 // patchPayloadForRoothide walks the package and applies the Mach-O /var/jb →
 // @loader_path/.jbroot rewrites plus the script/plist path translations.
-// DEBIAN and the pkgmirror copy are skipped (mirrored, not installed).
-func patchPayloadForRoothide(dir string) error {
+// DEBIAN and the pkgmirror copy are skipped (mirrored, not installed). In
+// --mode auto, every patched Mach-O also gains a sibling <file>.roothidepatch
+// symlink to /usr/lib/DynamicPatches/AutoPatches.dylib — upstream's
+// AutoPatches mechanism (unconditional per Mach-O, exactly like the
+// reference's ln -s).
+func patchPayloadForRoothide(dir, mode string) error {
 	return filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() {
+		// Skip dirs and symlinks: the .roothidepatch siblings point at a
+		// device-only path (/usr/lib/DynamicPatches/AutoPatches.dylib) that
+		// must never be followed during conversion.
+		if d.IsDir() || d.Type()&fs.ModeSymlink != 0 {
 			return nil
 		}
 		rel, _ := filepath.Rel(dir, path)
@@ -328,7 +364,17 @@ func patchPayloadForRoothide(dir string) error {
 			return err
 		}
 		if is {
-			return patchMachOForRoothide(path, rel)
+			if err := patchMachOForRoothide(path, rel); err != nil {
+				return err
+			}
+			if mode == "auto" {
+				link := path + ".roothidepatch"
+				if err := os.Symlink(autoPatchesDylib, link); err != nil {
+					return fmt.Errorf("creating .roothidepatch symlink for %s: %w", rel, err)
+				}
+				log.Infof("added .roothidepatch symlink for %s", rel)
+			}
+			return nil
 		}
 		switch {
 		case isScriptName(filepath.Base(rel)):
@@ -478,7 +524,9 @@ func warnRoothideFixedPaths(dir string) error {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() {
+		// Symlinks are skipped: the .roothidepatch siblings point at a
+		// device-only path that must never be followed.
+		if d.IsDir() || d.Type()&fs.ModeSymlink != 0 {
 			return nil
 		}
 		rel, _ := filepath.Rel(dir, path)

@@ -55,11 +55,17 @@ artifact is the .deb**.
 1. AirDrop / copy `roothide.deb` to the device into Files.
 2. Open it with **Filza** (install Filza from the roothide repo if needed) →
    "Open with Sileo" / "Open with Zebra".
-3. Sileo/Zebra shows the package — the **dynamic** mode control it reads
-   carries `Architecture: iphoneos-arm64e`, `Version: <ver>~roothide`, and
-   `Pre-Depends: patches-<pkg>(= <ver>~roothide)`. The `patches-<pkg>`
-   dependency comes from the **roothide patches repo**; make sure that repo
-   is added (the Bootstrap adds it by default). Install → respring.
+3. Sileo/Zebra shows the package — the control it reads carries
+   `Architecture: iphoneos-arm64e` plus the mode-dependent edits:
+   - **`--mode auto`** → `Pre-Depends: rootless-compat(>= 0.9)` and a
+     `.roothidepatch` symlink next to every payload Mach-O (the
+     AutoPatches mechanism — the roothide runtime auto-patches binaries
+     with a `.roothidepatch` sibling).
+   - **`--mode dynamic`** → `Version: <ver>~roothide` and
+     `Pre-Depends: patches-<pkg>(= <ver>~roothide)`. The `patches-<pkg>`
+     dependency comes from the **roothide patches repo**; make sure that
+     repo is added (the Bootstrap adds it by default).
+   Install → respring.
 
 ### 3b. Via dpkg from a terminal
 
@@ -107,7 +113,11 @@ is the roothide-side record that a patched package exists. The Bootstrap
 (`Bootstrap/bootstrap.m`, `fixMobileDirectories`) explicitly skips
 `/var/mobile/Library/pkgmirror` when it re-owns mobile directories — the
 mirror keeps the ownership the patch tool set (mobile, 501:501), which is
-why the converter emits it with world-readable `0755` modes.
+why the converter emits it with world-readable `0755` modes. It is a
+**pre-patch snapshot**: it never contains payload `.roothidepatch` symlinks
+(the AutoPatches siblings ship only in the installable payload), and it
+copies any `DEBIAN/*.roothidepatch` files the input package itself shipped
+(upstream's best-effort `cp`).
 
 Practical guidance:
 
@@ -129,6 +139,7 @@ Practical guidance:
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | Sileo refuses to install: unresolved `patches-<pkg>` | dynamic mode adds the Pre-Depends; the patches repo isn't added | Add the roothide patches repo, or rebuild with `--mode auto` (rootless-compat dep) or default (no dep) |
+| tweak loads but is never auto-patched | you built with `--mode dynamic` or default, which ship no `.roothidepatch` symlinks | rebuild with `--mode auto` (adds the symlinks + `rootless-compat` dep) if you want the AutoPatches treatment |
 | `dpkg -i` succeeds but the tweak never loads | app not finding the dylib at `@loader_path/.jbroot`, or the app is sandboxed away from the jbroot | verify `otool -L` paths; confirm the app was fully relaunched (not just backgrounded) |
 | fixed-paths warning at convert time | surviving `/var/jb` **strings** in `__cstring` (string tables aren't rewritten by the roothide pass — documented) | informational; if a jailbreak check breaks the tweak, that's the runtime behavior to watch |
 | "Killed: 9" / signature error at launch | the converter removes signatures (documented deviation: upstream ldid-signs) | roothide/Dopamine usually signs or tolerates unsigned at install; if not, re-sign with ldid on-device |
