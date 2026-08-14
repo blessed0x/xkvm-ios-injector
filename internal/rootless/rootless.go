@@ -1,6 +1,7 @@
-// Package rootless converts rootful jailbreak packages (.deb) to rootless,
-// porting the rootless-patcher (Nightwind, MIT) pipeline faithfully:
+// Package rootless converts jailbreak packages (.deb) between the three
+// jailbreak layouts, porting upstream pipelines faithfully:
 //
+// rootful → rootless (rootless-patcher, Nightwind MIT):
 //  1. repack — the payload is moved under var/jb/ (DEBIAN/ stays at the top)
 //  2. control — Architecture → iphoneos-arm64, Depends gains the rootless
 //     runtime alternation, an Icon path is converted
@@ -8,19 +9,32 @@
 //     component is a jailbreak bootstrap root are rewritten under /var/jb,
 //     honoring the ConversionRuleset blacklist and special cases; code
 //     signatures are removed first (rootless installs re-sign or skip)
+//  4. __TEXT.__cstring — runtime dlopen strings are rewritten too, with
+//     growing strings relocated into a __PATCH_ROOTLESS segment
+//     (internal/macho/cstring.go); see ARCHITECTURE.md §5.4
+//  5. --tweakinject — Derootifier's modern Dopamine/ellekit conventions:
+//     DynamicLibraries → usr/lib/TweakInject, CydiaSubstrate deps →
+//     @rpath/libsubstrate.dylib, install names → @rpath/<basename>, plus the
+//     /usr/lib + /var/jb/usr/lib rpaths
+//  6. a post-conversion fixed-paths warning audits surviving rootful paths
+//     (WarnFixedPaths) — informational, never fatal
 //
-// Scope boundary (documented in ARCHITECTURE.md): upstream also patches
-// CFStrings and __data string pointers (ADRP/ADD instruction rewriting,
-// chained-fixup aware). xkvm converts the load-command layer only, which is
-// where a rootful tweak's dylib dependencies live; runtime dlopen strings
-// compiled into __TEXT are not rewritten.
+// rootless → roothide (RootHidePatcher, GPL semantics reference — roothide.go):
+//
+//	var/jb payload hoisted to the package root, remaining files under
+//	rootfs/, /var/jb load commands and rpaths rewritten to
+//	@loader_path/.jbroot/..., control → iphoneos-arm64e, script/plist path
+//	translations, optional pkgmirror — see ARCHITECTURE.md §5.4.
 package rootless
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/xkvm/xkvm/internal/deb"
@@ -201,8 +215,13 @@ func firstPathComponent(s string) string {
 // Convert converts a rootful deb at input to a rootless deb at output. thin
 // additionally thins every Mach-O to arm64 (best-effort: binaries that
 // cannot thin are skipped with a warning rather than aborting the package).
-// Inputs already rootless (payload under var/jb) are rebuilt unchanged.
-func Convert(input, output string, thin bool) error {
+// tweakinject applies the modern Dopamine/ellekit conventions ported from
+// haxi0/Derootifier: DynamicLibraries is moved to usr/lib/TweakInject,
+// CydiaSubstrate deps become @rpath/libsubstrate.dylib (the ellekit
+// substrate shim), install names become @rpath/<basename>, and the
+// /usr/lib + /var/jb/usr/lib rpaths are added. Inputs already rootless
+// (payload under var/jb) are rebuilt unchanged.
+func Convert(input, output string, thin, tweakinject bool) error {
 	tmpdir, err := os.MkdirTemp("", "xkvm-rootless-*")
 	if err != nil {
 		return err
@@ -217,11 +236,20 @@ func Convert(input, output string, thin bool) error {
 	if err := repackRootless(tmpdir); err != nil {
 		return err
 	}
+	if tweakinject {
+		if err := applyTweakInjectLayout(tmpdir); err != nil {
+			return err
+		}
+	}
 	if err := editControl(tmpdir); err != nil {
 		return err
 	}
-	converted, err := convertMachOs(filepath.Join(tmpdir, "var", "jb"), thin)
+	payload := filepath.Join(tmpdir, "var", "jb")
+	converted, err := convertMachOs(payload, thin, tweakinject)
 	if err != nil {
+		return err
+	}
+	if err := WarnFixedPaths(payload); err != nil {
 		return err
 	}
 
@@ -236,6 +264,45 @@ func Convert(input, output string, thin bool) error {
 	log.Infof("rootless conversion: %d Mach-O load-command path(s) rewritten", converted)
 	log.Infof("wrote rootless deb at %s", output)
 	return nil
+}
+
+// applyTweakInjectLayout moves var/jb/Library/MobileSubstrate/DynamicLibraries
+// to var/jb/usr/lib/TweakInject (the modern ellekit/Dopamine convention;
+// Derootifier's repack script does the same move). A package without a
+// DynamicLibraries directory is untouched.
+func applyTweakInjectLayout(dir string) error {
+	dl := filepath.Join(dir, "var", "jb", "Library", "MobileSubstrate", "DynamicLibraries")
+	ti := filepath.Join(dir, "var", "jb", "usr", "lib", "TweakInject")
+	if _, err := os.Stat(dl); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if err := os.MkdirAll(ti, 0o755); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(dl)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		if err := os.Rename(filepath.Join(dl, e.Name()), filepath.Join(ti, e.Name())); err != nil {
+			return err
+		}
+	}
+	if err := os.Remove(dl); err != nil {
+		return err
+	}
+	log.Infof("moved DynamicLibraries to var/jb/usr/lib/TweakInject (ellekit convention)")
+	return nil
+}
+
+// isSubstratePath reports whether a converted load-command path references
+// the CydiaSubstrate/Substrate runtime, which the ellekit convention shims
+// as @rpath/libsubstrate.dylib.
+func isSubstratePath(s string) bool {
+	return strings.Contains(s, "CydiaSubstrate.framework") || strings.HasSuffix(s, "/libsubstrate.dylib")
 }
 
 // repackRootless moves the payload under var/jb (DEBIAN/ stays at the top),
@@ -399,9 +466,12 @@ func renderControl(entries []controlEntry) string {
 // convertMachOs walks payload (var/jb) and rewrites every Mach-O's
 // load-command dylib paths and install name under /var/jb per ShouldConvert.
 // Signatures are removed before editing (upstream RPCodesignHandler) — the
-// jailbreak's install path re-signs or tolerates unsigned binaries. Returns
-// the number of rewritten paths.
-func convertMachOs(payload string, thin bool) (int, error) {
+// jailbreak's install path re-signs or tolerates unsigned binaries. When
+// tweakinject is set, converted CydiaSubstrate deps become
+// @rpath/libsubstrate.dylib, install names become @rpath/<basename>, and the
+// /usr/lib + /var/jb/usr/lib rpaths are added (Derootifier conventions).
+// Returns the number of rewritten paths.
+func convertMachOs(payload string, thin, tweakinject bool) (int, error) {
 	converted := 0
 	err := filepath.WalkDir(payload, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -437,6 +507,9 @@ func convertMachOs(payload string, thin bool) (int, error) {
 				continue
 			}
 			convertedPath := ConvertString(dep)
+			if tweakinject && isSubstratePath(convertedPath) {
+				convertedPath = "@rpath/libsubstrate.dylib"
+			}
 			log.Infof("rewriting %s: %s -> %s", rel, dep, convertedPath)
 			if err := b.ChangeDependency(dep, convertedPath); err != nil {
 				return fmt.Errorf("rewriting dependency of %s: %w", rel, err)
@@ -445,11 +518,22 @@ func convertMachOs(payload string, thin bool) (int, error) {
 		}
 		if id, err := b.InstallName(); err == nil && id != "" && ShouldConvert(id) {
 			convertedID := ConvertString(id)
+			if tweakinject {
+				convertedID = "@rpath/" + filepath.Base(id)
+			}
 			log.Infof("rewriting install name of %s: %s -> %s", rel, id, convertedID)
 			if err := b.SetInstallName(convertedID); err != nil {
 				return fmt.Errorf("rewriting install name of %s: %w", rel, err)
 			}
 			converted++
+		}
+		if tweakinject {
+			if err := b.AddRpath("/usr/lib"); err != nil {
+				return fmt.Errorf("adding /usr/lib rpath to %s: %w", rel, err)
+			}
+			if err := b.AddRpath("/var/jb/usr/lib"); err != nil {
+				return fmt.Errorf("adding /var/jb/usr/lib rpath to %s: %w", rel, err)
+			}
 		}
 
 		// __TEXT.__cstring dlopen strings: runtime paths compiled into the
@@ -482,4 +566,83 @@ func contains(list []string, s string) bool {
 		}
 	}
 	return false
+}
+
+// fixedPathRe matches absolute paths rooted at the classic jailbreak
+// bootstrap roots (the set ShouldConvert examines). Used by WarnFixedPaths
+// to find rootful paths the conversion did not rewrite.
+var fixedPathRe = regexp.MustCompile(`/(?:Applications|Library|usr|var|etc|bin|sbin|tmp|lib|private|System)/[A-Za-z0-9_./+~-]*`)
+
+// WarnFixedPaths audits the converted payload for surviving rootful jailbreak
+// paths and warns about each one (upstream's "fixed-paths-warning"): Mach-O
+// load commands that ShouldConvert would still rewrite (a conversion miss),
+// and absolute jailbreak paths in non-Mach-O payload files (plists, scripts,
+// configs — the converter does not rewrite those). Paths that are correct to
+// keep rootful (Apple /usr/lib, /var/mobile user data, /System) are excluded
+// by the blacklist. The scan is informational, never fatal.
+func WarnFixedPaths(payload string) error {
+	warned := 0
+	err := filepath.WalkDir(payload, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		rel, _ := filepath.Rel(payload, path)
+		is, err := macho.IsMachO(path)
+		if err != nil {
+			return err
+		}
+		if is {
+			b := macho.Bin{Path: path}
+			deps, err := b.AllDependencies()
+			if err != nil {
+				return fmt.Errorf("reading dependencies of %s for fixed-path audit: %w", rel, err)
+			}
+			for _, dep := range deps {
+				if ShouldConvert(dep) {
+					log.Warnf("fixed-paths-warning: %s still depends on %s (should be under /var/jb)", rel, dep)
+					warned++
+				}
+			}
+			return nil
+		}
+		text, err := readPayloadText(path)
+		if err != nil {
+			return err
+		}
+		for _, m := range fixedPathRe.FindAllString(text, -1) {
+			if ShouldConvert(m) {
+				log.Warnf("fixed-paths-warning: %s still contains rootful path %s (not rewritten)", rel, m)
+				warned++
+			}
+		}
+		return nil
+	})
+	if warned > 0 {
+		log.Warnf("fixed-paths: %d path(s) survive the conversion — verify they are correct for rootless", warned)
+	}
+	return err
+}
+
+// readPayloadText returns the head of a payload file when it looks
+// text-based (no NUL bytes in the first 64 KB); binary files and files
+// with no text yield "".
+func readPayloadText(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	buf := make([]byte, 65536)
+	n, err := f.Read(buf)
+	if err != nil && err != io.EOF {
+		return "", err
+	}
+	buf = buf[:n]
+	if bytes.IndexByte(buf, 0) >= 0 {
+		return "", nil
+	}
+	return string(buf), nil
 }

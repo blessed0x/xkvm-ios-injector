@@ -127,7 +127,7 @@ func TestCStringDlopenRuntimeProof(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 	out := filepath.Join(tmp, "rootless.deb")
-	if err := Convert(rootful, out, false); err != nil {
+	if err := Convert(rootful, out, false, false); err != nil {
 		t.Fatalf("Convert: %v", err)
 	}
 

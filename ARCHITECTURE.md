@@ -395,7 +395,8 @@ ipa/deb layers, porting three upstream tools:
 |---|---|---|
 | `xkvm debify` | `cs59/Dylib-to-Deb-Converter` (GPL-3.0, format reference only) | dylib (or payload dir) → standard MobileSubstrate `.deb` |
 | `xkvm undeb` | `Dr-Sauce/Forte` (no license — a Shortcut that unarchives a deb) | `.deb` → extracted dylibs + resources + placement manifest |
-| `xkvm rootless` | `NightwindDev/rootless-patcher` (MIT — semantics ported) | rootful `.deb` → rootless `.deb` |
+| `xkvm rootless` | `NightwindDev/rootless-patcher` (MIT — semantics ported) + `haxi0/Derootifier` (GPL-3.0, `--tweakinject` conventions) | rootful `.deb` → rootless `.deb` |
+| `xkvm roothide` | `roothide/RootHidePatcher` (GPL-3.0 — semantics ported) | rootless `.deb` → roothide-jailbreak `.deb` |
 
 All three are **format/semantics ports — no upstream code is copied** (see
 NOTICE). `debify` produces the Dylib-to-Deb-Converter layout: `DEBIAN/control`
@@ -413,7 +414,9 @@ with the canonical `./` entry prefix, symlinks preserved, timestamps zeroed
 `Extract` only handles data.tar) — the full-payload path the rootless
 converter needs.
 
-**`xkvm rootless`** ports the rootless-patcher pipeline (`internal/rootless`):
+**`xkvm rootless`** ports the rootless-patcher pipeline (`internal/rootless`),
+with an opt-in `--tweakinject` mode porting Derootifier's modern
+Dopamine/ellekit conventions:
 
 1. **Repack** — every payload entry moves under `var/jb/` (`DEBIAN/` stays at
 the top). Already-rootless payloads are rebuilt unchanged (upstream's
@@ -440,6 +443,46 @@ and each reference — `__cfstring` table entries, `__DATA.__data` pointer
 slots, and ADRP/ADD + ADR instruction pairs in executable segments — is
 retargeted to the relocated string's VM address. Swift's hardcoded
 string-length MOVZ (16 bytes past the ADR) is patched to the new length.
+5. **`--tweakinject`** (off by default) applies the Derootifier conventions:
+`DynamicLibraries` is moved to `usr/lib/TweakInject`, every converted
+CydiaSubstrate-family dep (`CydiaSubstrate.framework/…`,
+`/libsubstrate.dylib`) becomes `@rpath/libsubstrate.dylib` (the ellekit
+substrate shim), install names become `@rpath/<basename>`, and the
+`/usr/lib` + `/var/jb/usr/lib` rpaths are added.
+6. **Fixed-paths warning** — after conversion, `WarnFixedPaths` audits the
+payload for surviving rootful paths and warns about each: Mach-O load
+commands `ShouldConvert` would still rewrite (a conversion miss) and
+absolute jailbreak paths in non-Mach-O payload files (plists, scripts — the
+converter does not rewrite those). The scan is informational, never fatal.
+
+**`xkvm roothide`** ports RootHidePatcher's `patch.sh` main path
+(`internal/rootless/roothide.go`) for the inverse direction — a
+rootless-jailbreak deb becomes a roothide-jailbreak package:
+
+1. **Hoist** — `var/jb/*` is moved to the package root; any other top-level
+payload entries land under `rootfs/` (on roothide the real system root is
+exposed at `/rootfs`). The loose set is captured *before* the hoist so the
+jbroot content is never mistaken for system files.
+2. **Control** — `Architecture → iphoneos-arm64e`; the `Conflicts`
+"roothide" mangle; and the mode-dependent edits: default adds none,
+`--mode auto` adds `rootless-compat(>= 0.9)`, `--mode dynamic` adds a
+`~roothide` version suffix plus a `patches-<pkg>(= <ver>~roothide)`
+Pre-Depends.
+3. **Mach-O** — every `/var/jb/...` load-command dependency and LC_RPATH is
+rewritten to `@loader_path/.jbroot/...` (the roothide bootstrap lives inside
+each app's container at `.jbroot`, so the jailbreak is invisible to the
+app). Signatures are removed (deviation below).
+4. **Scripts + plists** — the exact sed path translations upstream applies
+(`preinst`/`prerm`/`postinst`/`postrm`/`extrainst_`, LaunchDaemons and
+libSandy plists), ported with the /var/jb protect/unprotect dance order
+preserved.
+5. **Fixed-paths warning** — surviving `/var/jb` strings in converted Mach-O
+`__cstring` sections are reported (upstream's "fixed-paths-warning"; string
+tables are not rewritten by the roothide pass).
+
+`--pkgmirror` mirrors the (post-hoist) package to
+`var/mobile/Library/pkgmirror` with the control dir renamed
+`DEBIAN.<pkg>` for roothide's package manager.
 
 **Deviations from upstream (all documented, all intentional):**
 
@@ -459,6 +502,15 @@ common case).
 the valid original — dyld keeps using it, matching upstream's behavior.
 - **Addresses are compared as full 64-bit VM values** (upstream mixes file
 and image-base spaces).
+- **Roothide binaries are left unsigned** (upstream ldid-signs; the roothide
+install path signs or tolerates unsigned, matching xkvm's rootless
+converter contract).
+- **`serializeTOC` writes LC_RPATH with self-aligned padding.**
+go-macho's `Rpath.Write` pads to the absolute buffer position's 8-byte
+boundary while declaring a self-aligned cmdsize; on 32-bit slices whose
+preceding commands don't total a multiple of 8, the command physically
+occupies more bytes than declared, desyncing every subsequent command. The
+serializer replicates `Dylib.Write`'s pad-to-own-`Len` semantics instead.
 
 **Runtime proof:** `TestCStringDlopenRuntimeProof` compiles a clang fixture
 dylib whose dlopen path lives in `__cstring`, converts it through the whole

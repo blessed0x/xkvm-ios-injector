@@ -102,7 +102,7 @@ func TestRootlessOnDebifyOutput(t *testing.T) {
 		t.Fatalf("Debify: %v", err)
 	}
 	rootlessOut := filepath.Join(tmp, "rootless.deb")
-	if err := Rootless(rootful, rootlessOut, false); err != nil {
+	if err := Rootless(rootful, rootlessOut, false, false); err != nil {
 		t.Fatalf("Rootless: %v", err)
 	}
 

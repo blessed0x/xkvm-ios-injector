@@ -117,6 +117,31 @@ func serializeTOC(f *macho.File, buf *bytes.Buffer) error {
 				}
 			}
 		default:
+			// Rpath.Write pads to the ABSOLUTE buffer position's 8-byte
+			// boundary (buf.Len()%8), but the command's declared cmdsize is
+			// self-aligned (LoadSize). On a 32-bit slice whose preceding
+			// commands don't total a multiple of 8 the command physically
+			// occupies more bytes than it declares, desyncing every command
+			// after it (the second LC_RPATH read as cmd=0, cmdsize=garbage).
+			// Dylib.Write pads to its own d.Len; replicate that here for
+			// rpaths (identical self-aligned semantics).
+			if r, ok := l.(*macho.Rpath); ok {
+				start := cmds.Len()
+				if err := binary.Write(&cmds, f.ByteOrder, r.RpathCmd); err != nil {
+					return fmt.Errorf("failed to write rpath: %v", err)
+				}
+				if _, err := cmds.WriteString(r.Path + "\x00"); err != nil {
+					return fmt.Errorf("failed to write rpath path: %v", err)
+				}
+				written := cmds.Len() - start
+				if int(r.Len) < written {
+					return fmt.Errorf("rpath cmdsize %d is smaller than the %d bytes written; recalc via LoadSize after changing Path", r.Len, written)
+				}
+				if pad := int(r.Len) - written; pad > 0 {
+					cmds.Write(make([]byte, pad))
+				}
+				break
+			}
 			if err := l.Write(&cmds, f.ByteOrder); err != nil {
 				return fmt.Errorf("failed to write load command %s: %v", l.Command(), err)
 			}
@@ -820,6 +845,47 @@ func nativeAddRpath(path, rpath string) error {
 			PathOffset: uint32(binary.Size(types.RpathCmd{})),
 		}
 		f.AddLoad(r)
+		if err := guardLoadCommands(f); err != nil {
+			return nil, err
+		}
+		return nativeWrite(f, orig, nil)
+	})
+}
+
+// nativeRpaths returns the LC_RPATH paths of the first architecture slice.
+func nativeRpaths(path string) ([]string, error) {
+	f, err := readFirst(path)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, l := range f.Loads {
+		if r, ok := l.(*macho.Rpath); ok {
+			out = append(out, r.Path)
+		}
+	}
+	return out, nil
+}
+
+// nativeReplaceRpath rewrites an existing LC_RPATH entry's path (e.g.
+// /var/jb/usr/lib -> @loader_path/.jbroot/usr/lib for the roothide
+// layout). Growing paths ride the same guard + resize machinery as
+// ChangeDependency; the command size is recomputed via LoadSize().
+func nativeReplaceRpath(path, old, new string) error {
+	return editMachO(path, func(f *macho.File, orig []byte) ([]byte, error) {
+		changed := false
+		for _, l := range f.Loads {
+			r, ok := l.(*macho.Rpath)
+			if !ok || r.Path != old {
+				continue
+			}
+			r.Path = new
+			r.Len = r.LoadSize()
+			changed = true
+		}
+		if !changed {
+			return nativeWrite(f, orig, nil)
+		}
 		if err := guardLoadCommands(f); err != nil {
 			return nil, err
 		}

@@ -44,3 +44,11 @@ xkvm embeds (via `//go:embed all:extras`) third-party binaries and frameworks un
   var/jb, control edits, bootstrap/blacklist path rules) are ported to Go;
   no upstream code is copied. See ARCHITECTURE.md §5.4 for the documented
   load-command-layer boundary and blacklist deviation.
+- **Derootifier** (`haxi0/Derootifier`): GPL-3.0. Format reference for the
+  `xkvm rootless --tweakinject` mode only (TweakInject layout,
+  @rpath/libsubstrate.dylib shim, @rpath install names, rpaths); no code
+  copied.
+- **RootHidePatcher** (`roothide/RootHidePatcher`): GPL-3.0. Semantics
+  reference for `xkvm roothide` (var/jb hoist + rootfs/ split, .jbroot
+  load-command and rpath rewrites, control arm64e edits, script/plist path
+  translations, pkgmirror); no code copied.

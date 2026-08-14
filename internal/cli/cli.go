@@ -126,6 +126,7 @@ the -i input; the result is written to -o, or overwrites the input.`,
 	cmd.AddCommand(newDebifyCmd())
 	cmd.AddCommand(newUndebCmd())
 	cmd.AddCommand(newRootlessCmd())
+	cmd.AddCommand(newRoothideCmd())
 	return cmd
 }
 
@@ -335,9 +336,9 @@ deb→dylib direction of the Dylib-to-Deb-Converter / Forte workflow.`,
 // (rootless-patcher port; load-command layer only — see ARCHITECTURE.md).
 func newRootlessCmd() *cobra.Command {
 	var input, output string
-	var thin bool
+	var thin, tweakinject bool
 	cmd := &cobra.Command{
-		Use:   "rootless -i <rootful.deb> -o <rootless.deb> [--thin]",
+		Use:   "rootless -i <rootful.deb> -o <rootless.deb> [--thin] [--tweakinject]",
 		Short: "convert a rootful .deb to rootless",
 		Long: `rootless converts a rootful jailbreak .deb to a rootless one, porting the
 rootless-patcher pipeline: the payload is repacked under var/jb, the control
@@ -348,16 +349,65 @@ rewritten under /var/jb honoring the ConversionRuleset blacklist.
 Code signatures are removed (rootless installs re-sign). --thin thins every
 Mach-O to arm64 (best-effort). Runtime dlopen strings compiled into __TEXT
 (CFString/data pointers) are NOT rewritten — the load-command layer is the
-supported boundary. Already-rootless packages are rebuilt unchanged.`,
+supported boundary. Already-rootless packages are rebuilt unchanged.
+
+--tweakinject applies the modern Dopamine/ellekit conventions (ported from
+Derootifier): DynamicLibraries moves to usr/lib/TweakInject, CydiaSubstrate
+deps become @rpath/libsubstrate.dylib (the ellekit substrate shim), install
+names become @rpath/<basename>, and the /usr/lib + /var/jb/usr/lib rpaths
+are added.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return app.Rootless(input, output, thin)
+			return app.Rootless(input, output, thin, tweakinject)
 		},
 	}
 	f := cmd.Flags()
 	f.StringVarP(&input, "input", "i", "", "the rootful .deb to convert")
 	f.StringVarP(&output, "output", "o", "", "output .deb path")
 	f.BoolVar(&thin, "thin", false, "thin every Mach-O to arm64 (best-effort)")
+	f.BoolVar(&tweakinject, "tweakinject", false, "emit the modern TweakInject layout + @rpath/libsubstrate.dylib shim (Derootifier conventions)")
+	_ = cmd.MarkFlagRequired("input")
+	_ = cmd.MarkFlagRequired("output")
+	return cmd
+}
+
+// newRoothideCmd converts a rootless .deb to a roothide-jailbreak one:
+// var/jb payload hoisted to the package root, system files under rootfs/,
+// /var/jb → @loader_path/.jbroot load-command and rpath rewrites, and
+// iphoneos-arm64e control edits (RootHidePatcher port; GPL semantics
+// reference only — see NOTICE).
+func newRoothideCmd() *cobra.Command {
+	var input, output string
+	var pkgmirror bool
+	var mode string
+	cmd := &cobra.Command{
+		Use:   "roothide -i <rootless.deb> -o <roothide.deb> [--pkgmirror] [--mode auto|dynamic]",
+		Short: "convert a rootless .deb to a roothide-jailbreak one",
+		Long: `roothide converts a rootless jailbreak .deb (var/jb payload) to a
+roothide-jailbreak package, porting RootHidePatcher's patch.sh: the
+var/jb payload is hoisted to the package root, remaining system files move
+under rootfs/, every /var/jb/... load-command dependency and LC_RPATH is
+rewritten to @loader_path/.jbroot/..., the control file becomes
+iphoneos-arm64e, and preinst/prerm/postinst/postrm/extrainst_ scripts plus
+LaunchDaemons and libSandy plists get the same path translations.
+Signatures are removed (deviation: upstream ldid-signs; see ARCHITECTURE.md).
+A fixed-paths warning reports surviving /var/jb strings in __cstring.
+
+--pkgmirror mirrors the package to var/mobile/Library/pkgmirror with the
+control dir renamed DEBIAN.<pkg> for roothide's package manager. --mode
+controls the Pre-Depends/version edits: default adds none; auto adds
+rootless-compat(>= 0.9); dynamic adds a ~roothide version suffix and a
+patches-<pkg>(= <ver>~roothide) Pre-Depends.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return app.Roothide(input, output, pkgmirror, mode)
+		},
+	}
+	f := cmd.Flags()
+	f.StringVarP(&input, "input", "i", "", "the rootless .deb to convert")
+	f.StringVarP(&output, "output", "o", "", "output .deb path")
+	f.BoolVar(&pkgmirror, "pkgmirror", false, "mirror the package to var/mobile/Library/pkgmirror")
+	f.StringVar(&mode, "mode", "", "roothide control edit mode: auto or dynamic (default: none)")
 	_ = cmd.MarkFlagRequired("input")
 	_ = cmd.MarkFlagRequired("output")
 	return cmd

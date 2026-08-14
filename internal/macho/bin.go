@@ -37,6 +37,17 @@ func (b Bin) AddRpath(rpath string) error {
 	return nativeAddRpath(b.Path, rpath)
 }
 
+// ReplaceRpath rewrites an existing LC_RPATH entry's path (a no-op when no
+// entry matches).
+func (b Bin) ReplaceRpath(old, new string) error {
+	return nativeReplaceRpath(b.Path, old, new)
+}
+
+// Rpaths returns the LC_RPATH entries of the first architecture slice.
+func (b Bin) Rpaths() ([]string, error) {
+	return nativeRpaths(b.Path)
+}
+
 // RemoveSignature removes the code signature so the binary can be edited.
 func (b Bin) RemoveSignature() error {
 	return nativeRemoveSignature(b.Path)

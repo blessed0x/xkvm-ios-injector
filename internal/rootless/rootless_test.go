@@ -133,7 +133,7 @@ func TestConvertEndToEnd(t *testing.T) {
 	}
 
 	out := filepath.Join(tmp, "rootless.deb")
-	if err := Convert(rootful, out, false); err != nil {
+	if err := Convert(rootful, out, false, false); err != nil {
 		t.Fatalf("Convert: %v", err)
 	}
 
@@ -218,7 +218,7 @@ func TestConvertAlreadyRootless(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := filepath.Join(tmp, "out.deb")
-	if err := Convert(in, out, false); err != nil {
+	if err := Convert(in, out, false, false); err != nil {
 		t.Fatalf("Convert: %v", err)
 	}
 

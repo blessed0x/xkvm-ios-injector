@@ -200,8 +200,10 @@ func Undeb(input, outDir string) error {
 
 // Rootless is the `xkvm rootless` entry point: convert a rootful .deb to a
 // rootless one (payload under var/jb, control edits, Mach-O load-command
-// path conversion). See internal/rootless.
-func Rootless(input, output string, thin bool) error {
+// path conversion). tweakinject additionally applies the modern
+// Dopamine/ellekit conventions (TweakInject layout, @rpath/libsubstrate.dylib
+// shim). See internal/rootless.
+func Rootless(input, output string, thin, tweakinject bool) error {
 	if !strings.HasSuffix(input, ".deb") {
 		return fmt.Errorf("the input must be a .deb")
 	}
@@ -211,7 +213,24 @@ func Rootless(input, output string, thin bool) error {
 	if output == "" {
 		return fmt.Errorf("the output path is required")
 	}
-	return rootless.Convert(input, output, thin)
+	return rootless.Convert(input, output, thin, tweakinject)
+}
+
+// Roothide is the `xkvm roothide` entry point: convert a rootless .deb to a
+// roothide-jailbreak one (var/jb payload hoisted to the package root, system
+// files under rootfs/, /var/jb → @loader_path/.jbroot load-command and rpath
+// rewrites, arm64e control edits). See internal/rootless.
+func Roothide(input, output string, pkgmirror bool, mode string) error {
+	if !strings.HasSuffix(input, ".deb") {
+		return fmt.Errorf("the input must be a .deb")
+	}
+	if _, err := os.Stat(input); err != nil {
+		return fmt.Errorf("%s does not exist", input)
+	}
+	if output == "" {
+		return fmt.Errorf("the output path is required")
+	}
+	return rootless.ConvertToRoothide(input, output, pkgmirror, mode)
 }
 
 // exportArtifacts copies collected artifacts to outDir, deduping by basename
