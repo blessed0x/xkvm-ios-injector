@@ -386,6 +386,69 @@ key, assert unrelated keys survived, `SkipUnlessNativeToolchain`); enforce any
 mutual exclusivity in `Options.validate()`. e2e: the liquid-glass pair is
 stage [9/10] and force-fullscreen stage [10/10] in `scripts/e2e-real.sh`.
 
+### 5.4 Package commands: `debify`, `undeb`, `rootless` (xkvm-native, three upstream references)
+
+Three subcommands implement the tweak-package lifecycle around the existing
+ipa/deb layers, porting three upstream tools:
+
+| Command | Upstream reference | What it does |
+|---|---|---|
+| `xkvm debify` | `cs59/Dylib-to-Deb-Converter` (GPL-3.0, format reference only) | dylib (or payload dir) → standard MobileSubstrate `.deb` |
+| `xkvm undeb` | `Dr-Sauce/Forte` (no license — a Shortcut that unarchives a deb) | `.deb` → extracted dylibs + resources + placement manifest |
+| `xkvm rootless` | `NightwindDev/rootless-patcher` (MIT — semantics ported) | rootful `.deb` → rootless `.deb` |
+
+All three are **format/semantics ports — no upstream code is copied** (see
+NOTICE). `debify` produces the Dylib-to-Deb-Converter layout: `DEBIAN/control`
++ `Library/MobileSubstrate/DynamicLibraries/{pkg}.dylib` + a `Filter/Bundles`
+plist (from `--bundle-id`, or `--filter` for an exact one); `--resource
+src:dest` adds arbitrary payload files; `--depends` replaces the default
+`mobilesubstrate`. `undeb` is `xkvm extract` for debs: it reuses
+`deb.Extract` + the §5.2 placement manifest, so a deb-extracted dylib
+re-injects with its original placement remembered.
+
+**The deb writer** (`internal/deb/build.go`): `deb.Build(stagingDir, dest)`
+packages `DEBIAN/` → `control.tar.gz` and everything else → `data.tar.gz`
+with the canonical `./` entry prefix, symlinks preserved, timestamps zeroed
+(reproducible builds). `deb.Unpack` extracts BOTH tars (the reader's
+`Extract` only handles data.tar) — the full-payload path the rootless
+converter needs.
+
+**`xkvm rootless`** ports the rootless-patcher pipeline (`internal/rootless`):
+
+1. **Repack** — every payload entry moves under `var/jb/` (`DEBIAN/` stays at
+the top). Already-rootless payloads are rebuilt unchanged (upstream's
+"skipping and exiting cleanly").
+2. **Control** — `Architecture → iphoneos-arm64`, `Depends` gains
+`cy+cpu.arm64v8 | oldabi-xina | oldabi`, an `Icon` path is converted.
+Upstream's Depends append is buggy (crashes on string Depends); xkvm
+appends correctly in all cases.
+3. **Mach-O** — signatures are removed (rootless installs re-sign), then
+every load-command dylib path and the LC_ID_DYLIB whose first path
+component is a bootstrap root (`Library`, `usr`, `var`, …) is rewritten
+under `/var/jb` via the existing growing-rename machinery
+(`ChangeDependency`/`SetInstallName`), honoring the ConversionRuleset
+blacklist and special cases. `@rpath`/`@executable_path` deps are never
+touched (their first component isn't a bootstrap root).
+
+**Documented boundary (deviation):** upstream's string scanner rewrites
+`__TEXT.__cstring` + `__DATA.__data` strings with pointer patching
+(CFStrings, ADRP/ADD, chained-fixup aware) — Apple's `/usr/lib` libraries
+never appear there, so its blacklist omits them. xkvm converts the
+**load-command layer only**, where `libSystem.B.dylib` etc. DO appear, so the
+blacklist adds the Apple `/usr/lib` families (`libSystem`, `libobjc`,
+`libc++`, `libz`, `libsqlite3`, …) — a corrupted libc dependency would break
+the whole tweak, while a not-converted jailbreak lib merely keeps a rootful
+path (`xkvm check` can't yet see it — same as before conversion). Runtime
+dlopen strings compiled into `__TEXT` are out of scope; `--thin` thins every
+Mach-O to arm64 best-effort.
+
+**Tests** (all native-gated where they build Mach-Os): deb Build/Unpack
+round-trip incl. symlink-in-tar; ShouldConvert/ConvertString fidelity tables
+pinned against the upstream ruleset; `TestConvertEndToEnd` converts a real
+dylib with substrate-style weak deps and asserts converted + untouched load
+commands; app-level debify→undeb round trip with manifest; rootless-on-
+debify-output with `var/jb` layout + control assertions.
+
 ---
 
 ## 6. Pipeline (parity with `logic.py`, extended)

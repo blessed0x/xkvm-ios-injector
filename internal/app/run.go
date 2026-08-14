@@ -328,35 +328,9 @@ func ExtractArtifacts(input, outDir string) error {
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return err
 	}
-	manifest := &artifact.Manifest{Format: 1, Source: input}
-	for _, a := range arts {
-		base := filepath.Base(a)
-		dest := filepath.Join(outDir, base)
-		if _, err := os.Stat(dest); err == nil {
-			// Two artifacts can share a basename (e.g. Frameworks/X.framework
-			// and PlugIns/x/X.framework); never clobber the first one.
-			log.Warnf("skipping duplicate artifact %s (already extracted)", base)
-			continue
-		}
-		if err := copyDir(a, dest); err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(appDir, a)
-		if err != nil {
-			return err
-		}
-		manifest.Artifacts = append(manifest.Artifacts, artifact.ManifestEntry{
-			Name:      base,
-			Kind:      artifact.KindFor(base),
-			Placement: artifact.PlacementFor(rel),
-		})
-		log.Infof("extracted %s (%s, %s)", base, artifact.KindFor(base), artifact.PlacementFor(rel))
-	}
-	if err := artifact.WriteManifest(filepath.Join(outDir, manifestName), manifest); err != nil {
-		return fmt.Errorf("writing extraction manifest: %w", err)
-	}
-	log.Infof("wrote %s (%d artifact(s), placements remembered)", manifestName, len(manifest.Artifacts))
-	return nil
+	// Two artifacts can share a basename (e.g. Frameworks/X.framework and
+	// PlugIns/x/X.framework); exportArtifacts never clobbers the first one.
+	return exportArtifacts(appDir, outDir, input, arts)
 }
 
 // CheckBundle is the `xkvm check` entry point: opens an app/ipa and reports

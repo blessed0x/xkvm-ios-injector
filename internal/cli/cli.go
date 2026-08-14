@@ -123,6 +123,9 @@ the -i input; the result is written to -o, or overwrites the input.`,
 	cmd.AddCommand(newExtractCmd())
 	cmd.AddCommand(newCyanCheckCmd())
 	cmd.AddCommand(newCheckCmd())
+	cmd.AddCommand(newDebifyCmd())
+	cmd.AddCommand(newUndebCmd())
+	cmd.AddCommand(newRootlessCmd())
 	return cmd
 }
 
@@ -243,6 +246,120 @@ any error-level finding exists, 0 when only warnings (or nothing) did.`,
 			return nil
 		},
 	}
+	return cmd
+}
+
+// newDebifyCmd wraps a tweak dylib (or payload directory) into a standard
+// MobileSubstrate .deb (Dylib-to-Deb-Converter format): DEBIAN/control +
+// Library/MobileSubstrate/DynamicLibraries/{name}.dylib + filter plist.
+func newDebifyCmd() *cobra.Command {
+	var (
+		input, output, name, version, maintainer, author, description, filter string
+		bundleIDs, resources, depends                                         []string
+	)
+	cmd := &cobra.Command{
+		Use:   "debify -i <tweak.dylib|dir> -o <out.deb>",
+		Short: "build a MobileSubstrate .deb from a dylib (or payload dir)",
+		Long: `debify wraps a tweak dylib into a standard rootful .deb, matching the
+Dylib-to-Deb-Converter format: the dylib lands in
+Library/MobileSubstrate/DynamicLibraries/ and an optional Filter/Bundles
+plist is generated from --bundle-id. An input directory is treated as a
+complete payload root and copied verbatim; --resource adds extra payload
+files as src:dest pairs. Depends defaults to mobilesubstrate; --depends
+replaces it. Use 'xkvm rootless' to convert the result.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if output == "" {
+				return fmt.Errorf("required flag(s) \"output\" not set")
+			}
+			return app.Debify(app.DebifyOptions{
+				Input:       input,
+				Output:      output,
+				Name:        name,
+				Version:     version,
+				Maintainer:  maintainer,
+				Author:      author,
+				Description: description,
+				BundleIDs:   bundleIDs,
+				Filter:      filter,
+				Resources:   resources,
+				Depends:     depends,
+			})
+		},
+	}
+	f := cmd.Flags()
+	f.StringVarP(&input, "input", "i", "", "the tweak .dylib or payload directory")
+	f.StringVarP(&output, "output", "o", "", "output .deb path")
+	f.StringVar(&name, "name", "", "package/display name (default: input basename)")
+	f.StringVar(&version, "version", "", "package version (default 1.0)")
+	f.StringVar(&maintainer, "maintainer", "", "Maintainer field (default xkvm)")
+	f.StringVar(&author, "author", "", "Author field (default xkvm)")
+	f.StringVar(&description, "description", "", "Description field")
+	f.StringArrayVar(&bundleIDs, "bundle-id", nil, "target app bundle id(s) for the Filter/Bundles plist (repeatable)")
+	f.StringVar(&filter, "filter", "", "exact filter plist to ship instead of a generated one")
+	f.StringArrayVar(&resources, "resource", nil, "extra payload file as src:dest (repeatable)")
+	f.StringArrayVar(&depends, "depends", nil, "Depends entr(ies); replaces the default mobilesubstrate (repeatable)")
+	_ = cmd.MarkFlagRequired("input")
+	_ = cmd.MarkFlagRequired("output")
+	return cmd
+}
+
+// newUndebCmd extracts a tweak .deb and dumps its injectable artifacts
+// (dylib/framework/bundle) with a placement manifest — the Forte (deb→dylib)
+// equivalent, tool-native.
+func newUndebCmd() *cobra.Command {
+	var input, output string
+	cmd := &cobra.Command{
+		Use:   "undeb -i <tweak.deb> -o <dir>",
+		Short: "extract tweak artifacts (dylibs, bundles) from a .deb",
+		Long: `undeb unpacks a tweak .deb and copies its injectable artifacts (dylibs,
+frameworks, bundles) into -o, writing the same xkvm-manifest.json sidecar
+as 'xkvm extract' so re-injection restores original placements. This is the
+deb→dylib direction of the Dylib-to-Deb-Converter / Forte workflow.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return app.Undeb(input, output)
+		},
+	}
+	f := cmd.Flags()
+	f.StringVarP(&input, "input", "i", "", "the .deb to extract from")
+	f.StringVarP(&output, "output", "o", "", "directory to write artifacts to")
+	_ = cmd.MarkFlagRequired("input")
+	_ = cmd.MarkFlagRequired("output")
+	return cmd
+}
+
+// newRootlessCmd converts a rootful .deb to a rootless one: payload repacked
+// under var/jb, control edits (iphoneos-arm64 + the rootless runtime
+// dependency), and Mach-O load-command paths rewritten under /var/jb
+// (rootless-patcher port; load-command layer only — see ARCHITECTURE.md).
+func newRootlessCmd() *cobra.Command {
+	var input, output string
+	var thin bool
+	cmd := &cobra.Command{
+		Use:   "rootless -i <rootful.deb> -o <rootless.deb> [--thin]",
+		Short: "convert a rootful .deb to rootless",
+		Long: `rootless converts a rootful jailbreak .deb to a rootless one, porting the
+rootless-patcher pipeline: the payload is repacked under var/jb, the control
+file gains iphoneos-arm64 + the rootless runtime dependency
+(cy+cpu.arm64v8 | oldabi-xina | oldabi), and Mach-O load-command dylib
+paths whose first component is a bootstrap root (/Library, /usr, ...) are
+rewritten under /var/jb honoring the ConversionRuleset blacklist.
+Code signatures are removed (rootless installs re-sign). --thin thins every
+Mach-O to arm64 (best-effort). Runtime dlopen strings compiled into __TEXT
+(CFString/data pointers) are NOT rewritten — the load-command layer is the
+supported boundary. Already-rootless packages are rebuilt unchanged.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return app.Rootless(input, output, thin)
+		},
+	}
+	f := cmd.Flags()
+	f.StringVarP(&input, "input", "i", "", "the rootful .deb to convert")
+	f.StringVarP(&output, "output", "o", "", "output .deb path")
+	f.BoolVar(&thin, "thin", false, "thin every Mach-O to arm64 (best-effort)")
+	_ = cmd.MarkFlagRequired("input")
+	_ = cmd.MarkFlagRequired("output")
 	return cmd
 }
 

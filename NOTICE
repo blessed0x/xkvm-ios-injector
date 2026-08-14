@@ -34,3 +34,13 @@ xkvm embeds (via `//go:embed all:extras`) third-party binaries and frameworks un
 - **Feather** (`claration/Feather`): GPL-3.0. Used only as a feature reference
   (`feather-ellekit-spec.md`); no Feather code is included in xkvm.
 - **cyan** (`asdfzxcvbn/pyzule-rw`) and **Azule**: porting references for xkvm's design.
+- **Dylib-to-Deb-Converter** (`cs59/Dylib-to-Deb-Converter`): GPL-3.0. Format
+  reference for `xkvm debify` only (the deb layout is standard MobileSubstrate
+  convention); no code copied.
+- **Forte** (`Dr-Sauce/Forte`): no license file (an Apple Shortcut). Behavior
+  reference for `xkvm undeb` (unarchive a deb, grab the dylib); no code copied.
+- **rootless-patcher** (`NightwindDev/rootless-patcher`): MIT (copyright
+  Nightwind). The conversion semantics of `xkvm rootless` (repack under
+  var/jb, control edits, bootstrap/blacklist path rules) are ported to Go;
+  no upstream code is copied. See ARCHITECTURE.md §5.4 for the documented
+  load-command-layer boundary and blacklist deviation.

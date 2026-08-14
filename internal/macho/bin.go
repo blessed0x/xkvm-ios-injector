@@ -77,6 +77,28 @@ func (b Bin) Architectures() ([]string, error) {
 	return nativeArchitectures(b.Path)
 }
 
+// InstallName returns the LC_ID_DYLIB install name of the first architecture
+// slice, or "" when the binary has none. Used by the rootless converter to
+// rewrite an absolute dylib id under /var/jb.
+func (b Bin) InstallName() (string, error) {
+	return nativeInstallName(b.Path)
+}
+
+// AllDependencies returns every imported dylib name with no path filtering
+// (Dependencies applies cyan's /Library/, /usr/lib/, @ starter rule, which
+// hides converted /var/jb/... paths). Used by tests to assert the full load
+// command set after rootless conversion.
+func (b Bin) AllDependencies() ([]string, error) {
+	return nativeAllDependencies(b.Path)
+}
+
+// IsMachO reports whether the file at path is a Mach-O binary (thin or fat,
+// either byte order). Used by the rootless converter to find binaries inside
+// a deb payload without relying on extensions.
+func IsMachO(path string) (bool, error) {
+	return nativeIsMachO(path)
+}
+
 // ThintoArm64 thins a fat binary to arm64 in place. Thin arm64 binaries are a
 // no-op; fat binaries without arm64 return an error.
 func (b Bin) ThintoArm64() error {

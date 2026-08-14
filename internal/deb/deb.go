@@ -83,6 +83,17 @@ func extractTarMember(r io.Reader, name, dest string) ([]string, error) {
 	return arts, nil
 }
 
+// extractTar decompresses a data.tar.* / control.tar.* member into dest
+// without artifact collection (the full-payload path used by Unpack).
+func extractTar(r io.Reader, name, dest string) error {
+	dr, closer, err := decompressorFor(name, r)
+	if err != nil {
+		return err
+	}
+	defer closer.Close()
+	return untar(dr, dest)
+}
+
 func decompressorFor(name string, r io.Reader) (io.Reader, io.Closer, error) {
 	switch {
 	case strings.HasSuffix(name, ".gz"), strings.HasSuffix(name, ".gzip"):

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -356,6 +357,17 @@ func nativeDependencies(path string) ([]string, error) {
 	return deps, nil
 }
 
+// nativeAllDependencies returns every imported dylib name (ImportedLibraries
+// covers Load/Weak/ReExport/Upward/Lazy), unfiltered — unlike
+// nativeDependencies, which applies cyan's path-starter rule.
+func nativeAllDependencies(path string) ([]string, error) {
+	f, err := readFirst(path)
+	if err != nil {
+		return nil, err
+	}
+	return f.ImportedLibraries(), nil
+}
+
 func nativeArchitectures(path string) ([]string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -696,6 +708,46 @@ func nativeInjectWeak(path, dylibPath string) error {
 		}
 		return nativeWrite(f, orig, nil)
 	})
+}
+
+// nativeIsMachO reports whether the file at path starts with a Mach-O or
+// fat-Mach-O magic (either byte order). Reads only the first 4 bytes, so it
+// is safe on arbitrarily large files.
+func nativeIsMachO(path string) (bool, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+	var magic [4]byte
+	if _, err := io.ReadFull(f, magic[:]); err != nil {
+		if err == io.EOF {
+			return false, nil
+		}
+		return false, err
+	}
+	v := binary.BigEndian.Uint32(magic[:])
+	// Big-endian reads make the little-endian magics appear byte-swapped.
+	// Values: 64/32-bit thin, fat, fat64, and their little-endian twins.
+	switch v {
+	case 0xfeedfacf, 0xfeedface, 0xcafebabe, 0xcafebabf,
+		0xcffaedfe, 0xcefaedfe, 0xbebafeca, 0xbfbafeca:
+		return true, nil
+	}
+	return false, nil
+}
+
+// nativeInstallName returns the LC_ID_DYLIB install name of the first
+// architecture slice, or "" when the binary has none.
+func nativeInstallName(path string) (string, error) {
+	f, err := readFirst(path)
+	if err != nil {
+		return "", err
+	}
+	if d := f.DylibID(); d != nil {
+		return d.Name, nil
+	}
+	return "", nil
 }
 
 func nativeChangeDependency(path, old, new string) error {
