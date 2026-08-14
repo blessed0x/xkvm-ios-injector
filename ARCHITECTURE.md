@@ -490,8 +490,14 @@ app). In `--mode auto`, every patched payload Mach-O also gains a sibling
 `<file>.roothidepatch` symlink to `/usr/lib/DynamicPatches/AutoPatches.dylib`
 (upstream's AutoPatches mechanism, unconditional per Mach-O — the roothide
 runtime applies the auto-patch treatment to binaries carrying such a
-sibling); `--mode dynamic` creates none. Signatures are removed (deviation
-below).
+sibling); `--mode dynamic` creates none. Every patched Mach-O is then
+re-signed like upstream's ldid step: MH_EXECUTE slices get the roothide
+platform entitlements (`roothide.entitlements`: `platform-application`,
+`no-sandbox`, AppBundles/AppDataContainers storage) MERGED over any
+entitlements the binary already carried — upstream replaces wholesale and
+its `-M` path only re-signs binaries that were already signed; the merge
+and unconditional sign are deliberate strict-superset improvements — and
+non-executables get a plain ad-hoc signature (upstream's `-S`).
 4. **Scripts + plists** — the exact sed path translations upstream applies,
 walking the whole package **including `DEBIAN/`** (upstream mv's DEBIAN
 into the walked root, so control scripts are patched too):
@@ -557,9 +563,12 @@ common case).
 the valid original — dyld keeps using it, matching upstream's behavior.
 - **Addresses are compared as full 64-bit VM values** (upstream mixes file
 and image-base spaces).
-- **Roothide binaries are left unsigned** (upstream ldid-signs; the roothide
-install path signs or tolerates unsigned, matching xkvm's rootless
-converter contract).
+- **Roothide signing is pure-Go and merges entitlements** (upstream ldid-signs
+with `-M -S<roothide.entitlements>` for executables and `-S` otherwise;
+xkvm signs with the same base via `pkg/codesign` — Apple-format DER
+(`internal/macho/der.go`), which macOS codesign accepts where ldid's blob
+is rejected — and merges the base over any existing entitlements instead
+of replacing them wholesale).
 - **`serializeTOC` writes LC_RPATH with self-aligned padding.**
 go-macho's `Rpath.Write` pads to the absolute buffer position's 8-byte
 boundary while declaring a self-aligned cmdsize; on 32-bit slices whose

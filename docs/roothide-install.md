@@ -26,7 +26,7 @@ One input (a rootless `.deb`, payload under `var/jb/`) becomes one output:
 
 | Piece | What it is | Who consumes it |
 |---|---|---|
-| The `.deb` itself | hoisted payload (`var/jb/*` → package root), system files under `rootfs/`, every `/var/jb/...` load command and LC_RPATH rewritten to `@loader_path/.jbroot/...`, control re-arched to `iphoneos-arm64e`, scripts/plists path-translated, signature removed | dpkg / Sileo / Zebra |
+| The `.deb` itself | hoisted payload (`var/jb/*` → package root), system files under `rootfs/`, every `/var/jb/...` load command and LC_RPATH rewritten to `@loader_path/.jbroot/...`, control re-arched to `iphoneos-arm64e`, scripts/plists path-translated, Mach-Os re-signed (executables: roothide platform entitlements merged with existing; others: plain ad-hoc) | dpkg / Sileo / Zebra |
 | `var/mobile/Library/pkgmirror/` (only with `--pkgmirror`) | a **snapshot of the hoisted-but-unmodified package**: control dir renamed `DEBIAN.<pkg>`, payload with its *original* `/var/jb` load commands, every entry `0755` | roothide's package-manager integration (sees it as an installed footprint; the Bootstrap's mobile-dir ownership fix skips it so it keeps its ownership) |
 
 Key point: the mirror is *not* a second copy of the patched package — it's
@@ -143,17 +143,19 @@ Practical guidance:
 | tweak loads but is never auto-patched | you built with `--mode dynamic` or default, which ship no `.roothidepatch` symlinks | rebuild with `--mode auto` (adds the symlinks + `rootless-compat` dep) if you want the AutoPatches treatment |
 | `dpkg -i` succeeds but the tweak never loads | app not finding the dylib at `@loader_path/.jbroot`, or the app is sandboxed away from the jbroot | verify `otool -L` paths; confirm the app was fully relaunched (not just backgrounded) |
 | fixed-paths warning at convert time | surviving `/var/jb` strings anywhere in the walked payload: Mach-O `__cstring` (string tables aren't rewritten by the roothide pass), a missed load-command dep/rpath rewrite, or printable strings in other payload files (`.png`/`.strings` excluded) | informational; if a jailbreak check breaks the tweak, that's the runtime behavior to watch — and a load-command hit means a rewrite *miss* worth fixing |
-| "Killed: 9" / signature error at launch | the converter removes signatures (documented deviation: upstream ldid-signs) | roothide/Dopamine usually signs or tolerates unsigned at install; if not, re-sign with ldid on-device |
+| "Killed: 9" / signature error at launch | a signature the device rejects — xkvm re-signs with ad-hoc Apple-format signatures, which jailbroken installs normally accept | re-sign with ldid on-device (`ldid -S <binary>`) as a fallback; report the exact error if this ever happens |
 | tweak works in some apps, not others | roothide's per-app injection list | enable the app in the roothide manager's injection settings |
 
 ---
 
 ## 6. Security note
 
-A converted roothide deb **removes the original code signature** from every
-Mach-O it touches (load-command rewrites invalidate it). That is expected
-and documented (ARCHITECTURE.md §5.4) — but it also means the installed
-binary is no longer covered by the developer's signature, so:
+A converted roothide deb **replaces the original code signature** on every
+Mach-O it touches (load-command rewrites invalidate it; the converter then
+re-signs with its own ad-hoc signature and, for executables, the roothide
+platform entitlements). That is expected and documented (ARCHITECTURE.md
+§5.4) — but it means the installed binary is no longer covered by the
+developer's original signature, so:
 
 - Only convert and install debs **you trust** (your own, or from sources you
   already run on the device).

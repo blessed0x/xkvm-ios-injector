@@ -389,8 +389,10 @@ var/jb payload is hoisted to the package root, remaining system files move
 under rootfs/, every /var/jb/... load-command dependency and LC_RPATH is
 rewritten to @loader_path/.jbroot/..., the control file becomes
 iphoneos-arm64e, and preinst/prerm/postinst/postrm/extrainst_ scripts plus
-LaunchDaemons and libSandy plists get the same path translations.
-Signatures are removed (deviation: upstream ldid-signs; see ARCHITECTURE.md).
+LaunchDaemons and libSandy plists get the same path translations. Every
+patched Mach-O is re-signed like upstream's ldid step: executables get the
+roothide platform entitlements merged with any they already carried, other
+Mach-Os get a plain ad-hoc signature (pure-Go, Apple-format valid).
 A fixed-paths warning reports surviving /var/jb strings in __cstring.
 
 --pkgmirror mirrors the package to var/mobile/Library/pkgmirror with the

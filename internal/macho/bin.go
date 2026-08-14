@@ -53,6 +53,13 @@ func (b Bin) RemoveSignature() error {
 	return nativeRemoveSignature(b.Path)
 }
 
+// IsExecutable reports whether any architecture slice is an MH_EXECUTE image
+// (upstream's `file | grep executable` gate, in pure Go). Used by the
+// roothide converter to decide which binaries get the platform entitlements.
+func (b Bin) IsExecutable() (bool, error) {
+	return nativeIsExecutable(b.Path)
+}
+
 // Fakesign ad-hoc signs the binary with no entitlements, for
 // AppSync/TrollStore.
 func (b Bin) Fakesign() error {

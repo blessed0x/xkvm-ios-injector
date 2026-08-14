@@ -475,6 +475,35 @@ func nativeExtractEntitlements(path string) ([]byte, error) {
 	return []byte(cs.Entitlements), nil
 }
 
+// nativeIsExecutable reports whether any architecture slice is an MH_EXECUTE
+// image — the pure-Go equivalent of upstream's `file | grep executable` gate
+// that decides which binaries get the roothide platform entitlements.
+func nativeIsExecutable(path string) (bool, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false, err
+	}
+	if isFatData(data) {
+		ff, err := macho.NewFatFile(bytes.NewReader(data))
+		if err != nil {
+			return false, err
+		}
+		defer ff.Close()
+		for _, arch := range ff.Arches {
+			if arch.File.Type == types.MH_EXECUTE {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
+	f, err := macho.NewFile(bytes.NewReader(data))
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+	return f.Type == types.MH_EXECUTE, nil
+}
+
 func nativeIsSigned(path string) bool {
 	f, err := readFirst(path)
 	if err != nil {

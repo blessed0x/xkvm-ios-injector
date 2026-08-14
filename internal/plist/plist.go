@@ -50,11 +50,17 @@ func Write(path string, d Dict) error {
 // WriteXML serializes d as an XML plist (for .strings-style files and plist
 // merge outputs that should stay human-readable).
 func WriteXML(path string, d Dict) error {
-	data, err := howett.Marshal(d, howett.XMLFormat)
+	data, err := EncodeXML(d)
 	if err != nil {
 		return err
 	}
 	return os.WriteFile(path, data, 0o644)
+}
+
+// EncodeXML serializes d as an XML plist. Used by the roothide converter to
+// re-encode merged entitlements before ad-hoc signing.
+func EncodeXML(d Dict) ([]byte, error) {
+	return howett.Marshal(d, howett.XMLFormat)
 }
 
 // ConvertToXML1 ports `plutil -convert xml1`: decodes a binary or XML plist

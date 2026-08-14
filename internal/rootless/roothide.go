@@ -16,12 +16,15 @@ package rootless
 //  3. Mach-O — every /var/jb/... load-command dependency and LC_RPATH is
 //     rewritten to @loader_path/.jbroot/... (the roothide bootstrap lives
 //     inside each app's container at .jbroot, so the jailbreak is invisible
-//     to the app); signatures are removed (documented deviation — upstream
-//     ldid-signs; the roothide install path signs or tolerates unsigned,
-//     matching xkvm's rootless converter contract). In --mode auto, every
-//     patched Mach-O also gains a sibling .roothidepatch symlink to
-//     /usr/lib/DynamicPatches/AutoPatches.dylib (upstream's AutoPatches
-//     mechanism); --mode dynamic creates none.
+//     to the app); the result is re-signed like upstream's ldid step —
+//     executables get the roothide platform entitlements merged with any
+//     they already carried, other Mach-Os get a plain ad-hoc signature.
+//     (Upstream replaces entitlements wholesale and its `-M` executable
+//     path only re-signs binaries that were already signed; the merge and
+//     unconditional sign are deliberate strict-superset improvements.) In
+//     --mode auto, every patched Mach-O also gains a sibling .roothidepatch
+//     symlink to /usr/lib/DynamicPatches/AutoPatches.dylib (upstream's
+//     AutoPatches mechanism); --mode dynamic creates none.
 //  4. scripts + plists — the same sed path translations upstream applies,
 //     walking the whole package INCLUDING DEBIAN/ (upstream mv's DEBIAN
 //     into the walked root): preinst/prerm/postinst/postrm/extrainst_
@@ -546,8 +549,79 @@ func isScriptName(base string) bool {
 	return false
 }
 
+// roothideEntitlements is the platform-app entitlement base upstream applies
+// to converted executables (RootHidePatcher's roothide.entitlements): the
+// keys make a bundle executable behave as a platform binary (no sandbox,
+// app-bundle/container storage) under roothide's launchd. The keys are
+// Apple-defined functional data; see NOTICE for provenance.
+const roothideEntitlements = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>platform-application</key>
+	<true/>
+	<key>com.apple.private.security.no-sandbox</key>
+	<true/>
+	<key>com.apple.private.security.storage.AppBundles</key>
+	<true/>
+	<key>com.apple.private.security.storage.AppDataContainers</key>
+	<true/>
+</dict>
+</plist>`
+
+// signMachOForRoothide ad-hoc signs a patched Mach-O, matching upstream's
+// ldid step (patch.sh): executables are signed with the roothide platform
+// entitlements — merged with any the binary already carried, so an existing
+// capability is never lost (upstream replaces; the merge is a deliberate
+// improvement) — and non-executables are signed plain ad-hoc with no
+// entitlements (upstream's `-S`). The pure-Go signature is Apple-format
+// valid (internal/macho/der.go), so the host's codesign accepts it — unlike
+// ldid's blob on macOS.
+func signMachOForRoothide(path, rel string) error {
+	b := macho.Bin{Path: path}
+	exe, err := b.IsExecutable()
+	if err != nil {
+		return fmt.Errorf("checking executable type of %s: %w", rel, err)
+	}
+	var ents []byte
+	if exe {
+		ents, err = mergedRoothideEntitlements(b)
+		if err != nil {
+			return err
+		}
+	}
+	if err := b.SignWithEntitlements(ents); err != nil {
+		return fmt.Errorf("signing %s: %w", rel, err)
+	}
+	return nil
+}
+
+// mergedRoothideEntitlements returns the roothide platform base merged over
+// the binary's existing entitlements (roothide keys win, everything else is
+// preserved). An unreadable or absent existing signature yields just the
+// base — the input's own ldid blob is often unparseable by go-macho, and
+// the upstream reference replaces rather than merges anyway.
+func mergedRoothideEntitlements(b macho.Bin) ([]byte, error) {
+	merged := plist.Dict{}
+	if orig, err := b.ExtractEntitlements(); err == nil {
+		if d, derr := plist.Decode(orig); derr != nil {
+			return nil, fmt.Errorf("decoding existing entitlements: %w", derr)
+		} else {
+			merged = d
+		}
+	}
+	base, err := plist.Decode([]byte(roothideEntitlements))
+	if err != nil {
+		return nil, fmt.Errorf("decoding roothide entitlements: %w", err)
+	}
+	for k, v := range base {
+		merged[k] = v
+	}
+	return plist.EncodeXML(merged)
+}
+
 // patchMachOForRoothide rewrites /var/jb/... dependencies and rpaths to
-// @loader_path/.jbroot/... and removes the signature.
+// @loader_path/.jbroot/... and re-signs the result (see signMachOForRoothide).
 func patchMachOForRoothide(path, rel string) error {
 	b := macho.Bin{Path: path}
 	deps, err := b.AllDependencies()
@@ -581,8 +655,8 @@ func patchMachOForRoothide(path, rel string) error {
 		}
 		patched++
 	}
-	if err := b.RemoveSignature(); err != nil {
-		return fmt.Errorf("removing signature from %s: %w", rel, err)
+	if err := signMachOForRoothide(path, rel); err != nil {
+		return err
 	}
 	log.Infof("patched Mach-O %s (%d path(s))", rel, patched)
 	return nil

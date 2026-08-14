@@ -72,3 +72,12 @@ xkvm embeds (via `//go:embed all:extras`) third-party binaries and frameworks un
   (`/var/jb/` → `/` only, no rootfs dance; see
   `TestLaunchDaemonsGoldenReal`). Sha-pinned provenance
   (`fa20343eac583ba6…` / `9b858e414ebd8168…`).
+
+## Roothide entitlements
+
+The `roothideEntitlements` constant in `internal/rootless/roothide.go` is
+derived from RootHidePatcher's `roothide.entitlements` (GPL-3.0 — format
+reference only, see the package doc comment): the four keys are
+Apple-defined functional entitlement data (`platform-application`,
+`com.apple.private.security.no-sandbox`, and the AppBundles/
+AppDataContainers storage grants), not creative expression.
