@@ -70,6 +70,18 @@ jobs:
       - name: Script-sed golden (verbose)
         if: matrix.os == 'macos-14'
         run: go test -race -v ./internal/rootless/ -run TestPatchScriptPathsGoldenUpstream
+      # Rootless-direction script golden (pure Go — runs on every leg in the
+      # suite-wide step). Pins patchScriptForRootless byte-for-byte against
+      # upstream rootless-patcher's verified output on a fixture exercising
+      # every RPScriptHandler token pattern (rootful bootstrap tokens, the
+      # double-conversion guard, ${VAR}/quote/continuation handling, the
+      # deliberate libSystem blacklist-superset deviation) plus the wiring
+      # test (control-script vs shebang branches, ASCII skip, mode
+      # preservation). Verbose re-run so the byte-level assertions land in
+      # the log.
+      - name: Rootless script golden (verbose)
+        if: matrix.os == 'macos-14'
+        run: go test -race -v ./internal/rootless/ -run 'TestPatchScriptRootlessGoldenUpstream|TestConvertScriptsWiring'
       # Pkgmirror install contract (macos-14 only — builds a rootless
       # fixture with the native toolchain). Pins both consumption paths of
       # --pkgmirror: the dpkg-installable .deb (edited control, patched

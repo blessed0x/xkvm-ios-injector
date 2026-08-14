@@ -12,11 +12,15 @@
 //  4. __TEXT.__cstring — runtime dlopen strings are rewritten too, with
 //     growing strings relocated into a __PATCH_ROOTLESS segment
 //     (internal/macho/cstring.go); see ARCHITECTURE.md §5.4
-//  5. --tweakinject — Derootifier's modern Dopamine/ellekit conventions:
+//  5. scripts — DEBIAN control scripts and shebang payload files get the
+//     same token-based path conversion upstream applies via RPScriptHandler
+//     (script_rootless.go), not a sed dance: tokens are split on " \n\"={}"
+//     and converted under /var/jb per the ConversionRuleset
+//  6. --tweakinject — Derootifier's modern Dopamine/ellekit conventions:
 //     DynamicLibraries → usr/lib/TweakInject, CydiaSubstrate deps →
 //     @rpath/libsubstrate.dylib, install names → @rpath/<basename>, plus the
 //     /usr/lib + /var/jb/usr/lib rpaths
-//  6. a post-conversion fixed-paths warning audits surviving rootful paths
+//  7. a post-conversion fixed-paths warning audits surviving rootful paths
 //     (WarnFixedPaths) — informational, never fatal
 //
 // rootless → roothide (RootHidePatcher, GPL semantics reference — roothide.go):
@@ -219,8 +223,10 @@ func firstPathComponent(s string) string {
 // haxi0/Derootifier: DynamicLibraries is moved to usr/lib/TweakInject,
 // CydiaSubstrate deps become @rpath/libsubstrate.dylib (the ellekit
 // substrate shim), install names become @rpath/<basename>, and the
-// /usr/lib + /var/jb/usr/lib rpaths are added. Inputs already rootless
-// (payload under var/jb) are rebuilt unchanged.
+// /usr/lib + /var/jb/usr/lib rpaths are added. Scripts (DEBIAN control
+// scripts plus any shebang payload file) get the token-based path
+// conversion via convertScripts, matching upstream's RPScriptHandler.
+// Inputs already rootless (payload under var/jb) are rebuilt unchanged.
 func Convert(input, output string, thin, tweakinject bool) error {
 	tmpdir, err := os.MkdirTemp("", "xkvm-rootless-*")
 	if err != nil {
@@ -247,6 +253,13 @@ func Convert(input, output string, thin, tweakinject bool) error {
 	payload := filepath.Join(tmpdir, "var", "jb")
 	converted, err := convertMachOs(payload, thin, tweakinject)
 	if err != nil {
+		return err
+	}
+	// Scripts (DEBIAN control scripts + any shebang file in the payload) get
+	// the same token-based path conversion upstream applies via
+	// RPScriptHandler; run before the fixed-paths audit so the warning
+	// reflects the post-conversion state.
+	if err := convertScripts(tmpdir); err != nil {
 		return err
 	}
 	if err := WarnFixedPaths(payload); err != nil {

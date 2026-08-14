@@ -332,8 +332,9 @@ deb→dylib direction of the Dylib-to-Deb-Converter / Forte workflow.`,
 
 // newRootlessCmd converts a rootful .deb to a rootless one: payload repacked
 // under var/jb, control edits (iphoneos-arm64 + the rootless runtime
-// dependency), and Mach-O load-command paths rewritten under /var/jb
-// (rootless-patcher port; load-command layer only — see ARCHITECTURE.md).
+// dependency), Mach-O load-command + __cstring paths rewritten under /var/jb,
+// and script path tokens converted (rootless-patcher port — see
+// ARCHITECTURE.md).
 func newRootlessCmd() *cobra.Command {
 	var input, output string
 	var thin, tweakinject bool
@@ -350,9 +351,13 @@ converted Mach-O is re-signed like Derootifier's ldid step: executables get
 the roothide platform entitlements merged with any they already carried,
 other Mach-Os get a plain ad-hoc signature (pure-Go, Apple-format valid).
 --thin thins every Mach-O to arm64 (best-effort). Runtime dlopen strings
-compiled into __TEXT (CFString/data pointers) are NOT rewritten — the
-load-command layer is the supported boundary. Already-rootless packages
-are rebuilt unchanged.
+compiled into __TEXT are rewritten too, with growing strings relocated into
+a __PATCH_ROOTLESS segment. Scripts (DEBIAN control scripts plus any
+shebang payload file) get the same token-based path conversion upstream
+applies via RPScriptHandler — tokens are split on " \n\"={}" and converted
+under /var/jb per the ConversionRuleset, with a double-conversion guard.
+Plists are not yet rewritten: WarnFixedPaths flags surviving rootful paths
+in them. Already-rootless packages are rebuilt unchanged.
 
 --tweakinject applies the modern Dopamine/ellekit conventions (ported from
 Derootifier): DynamicLibraries moves to usr/lib/TweakInject, CydiaSubstrate

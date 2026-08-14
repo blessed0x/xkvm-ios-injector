@@ -454,11 +454,29 @@ CydiaSubstrate-family dep (`CydiaSubstrate.framework/…`,
 `/libsubstrate.dylib`) becomes `@rpath/libsubstrate.dylib` (the ellekit
 substrate shim), install names become `@rpath/<basename>`, and the
 `/usr/lib` + `/var/jb/usr/lib` rpaths are added.
-6. **Fixed-paths warning** — after conversion, `WarnFixedPaths` audits the
+6. **Scripts** — DEBIAN control scripts and any shebang payload file get the
+same token-based path conversion upstream applies via `RPScriptHandler`
+(`internal/rootless/script_rootless.go`). It is NOT a sed dance: each file
+is split on the separator set `" \n\"={}"`, and every token whose first
+path component is a bootstrap root is rewritten under `/var/jb` per the
+ConversionRuleset. Tokens fire where a space-anchored sed would miss them
+(`$(/sbin/launchctl …)` — the `/sbin/launchctl` token has no leading
+space) and vice versa (a tab-indented path never fires — tabs are not
+separators). A token whose converted form already appears in the file is
+skipped (upstream's double-conversion guard), a `\`-continuation joins its
+next token (usually a no-op), and the shebang line is never converted.
+Non-ASCII shebang files are skipped (upstream's NSASCIIStringEncoding read
+fails on any non-ASCII byte), while DEBIAN control scripts are converted
+even without a shebang. The blacklist superset also protects Apple system
+paths here: a script token like `/usr/lib/libSystem.B.dylib` stays rootful
+where upstream rewrites it to a dangling `/var/jb/usr/lib` path (deliberate
+deviation, pinned by `TestPatchScriptRootlessGoldenUpstream`).
+7. **Fixed-paths warning** — after conversion, `WarnFixedPaths` audits the
 payload for surviving rootful paths and warns about each: Mach-O load
 commands `ShouldConvert` would still rewrite (a conversion miss) and
-absolute jailbreak paths in non-Mach-O payload files (plists, scripts — the
-converter does not rewrite those). The scan is informational, never fatal.
+absolute jailbreak paths in non-Mach-O payload files. Scripts are converted
+by the step above; plists are the remaining not-yet-rewritten layer (warned
+only). The scan is informational, never fatal.
 
 **`xkvm roothide`** ports RootHidePatcher's `patch.sh` main path
 (`internal/rootless/roothide.go`) for the inverse direction — a
