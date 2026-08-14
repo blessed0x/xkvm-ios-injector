@@ -156,3 +156,54 @@ func TestRoothideArchGate(t *testing.T) {
 		})
 	}
 }
+
+// TestRoothideConflictsMangle pins upstream's Conflicts rewrite
+// (`sed -i '/^Conflicts: /s/roothide/r-o-o-t-l-e-s-s-/g'`, patch.sh line
+// 322) — the field's "roothide" substrings mangle to r-o-o-t-l-e-s-s- so the
+// package can coexist with a stock roothide install. Surfaced by the
+// member-by-member comparison against upstream: the comparison input deb
+// carries no Conflicts line, and this branch had zero test coverage.
+func TestRoothideConflictsMangle(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		conf string // full Conflicts line, or "" for none
+		want string // expected Conflicts line after conversion, or "" for none
+	}{
+		{"plain roothide", "Conflicts: roothide", "Conflicts: r-o-o-t-l-e-s-s-"},
+		{"multi-value", "Conflicts: roothide, com.example.other", "Conflicts: r-o-o-t-l-e-s-s-, com.example.other"},
+		{"substring semantics", "Conflicts: roothide, roothide2", "Conflicts: r-o-o-t-l-e-s-s-, r-o-o-t-l-e-s-s-2"},
+		{"no roothide", "Conflicts: com.example.other", "Conflicts: com.example.other"},
+		{"no Conflicts line", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tmp := t.TempDir()
+			control := "Package: conflictstweak\nVersion: 1.0\nArchitecture: iphoneos-arm64\nDepends: mobilesubstrate\nDescription: conflicts mangle test\nMaintainer: xkvm\n"
+			if tc.conf != "" {
+				control += tc.conf + "\n"
+			}
+			in := buildControlFixture(t, tmp, control)
+			out := filepath.Join(tmp, "roothide.deb")
+			if err := ConvertToRoothide(in, out, false, ""); err != nil {
+				t.Fatalf("ConvertToRoothide: %v", err)
+			}
+			unpacked := filepath.Join(tmp, "unpacked")
+			if err := deb.Unpack(out, unpacked); err != nil {
+				t.Fatal(err)
+			}
+			ctl, err := os.ReadFile(filepath.Join(unpacked, "DEBIAN", "control"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := string(ctl)
+			if tc.want == "" {
+				if strings.Contains(got, "Conflicts") {
+					t.Errorf("control gained a Conflicts line; got:\n%s", got)
+				}
+				return
+			}
+			if !strings.Contains(got, tc.want+"\n") {
+				t.Errorf("control missing %q after conversion; got:\n%s", tc.want, got)
+			}
+		})
+	}
+}

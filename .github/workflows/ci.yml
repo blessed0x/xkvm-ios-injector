@@ -106,7 +106,7 @@ jobs:
       # iphoneos-arm64 input gate, and the no-var/ hoist case.
       - name: Control handling sweep (verbose)
         if: matrix.os == 'macos-14'
-        run: go test -race -v ./internal/rootless/ -run 'TestRoothideDSStoreCleanup|TestRoothideControlBlankLines|TestRoothideArchGate|TestRoothideHoistNoVar'
+        run: go test -race -v ./internal/rootless/ -run 'TestRoothideDSStoreCleanup|TestRoothideControlBlankLines|TestRoothideArchGate|TestRoothideHoistNoVar|TestRoothideConflictsMangle'
       # Sandy golden vs real production libSandy profiles (pure Go — also
       # runs in the suite-wide Test step on both legs; verbose re-run for
       # the log). Pins both halves of the dance on real data: the
