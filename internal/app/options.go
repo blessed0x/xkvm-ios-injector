@@ -3,6 +3,7 @@ package app
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -61,6 +62,19 @@ type Options struct {
 // validate checks option sanity before any work happens. It mirrors the
 // checks in cyan's tbhutils.validate_inputs.
 func (o *Options) validate() error {
+	// Users paste paths from browsers/Finder with %20 (and other %-escapes)
+	// for spaces and special chars. Decode them before any stat or suffix
+	// check, so an encoded path behaves like the literal one. Best-effort:
+	// an invalid escape is left alone rather than erroring.
+	o.Input = decodeURLPath(o.Input)
+	o.Output = decodeURLPath(o.Output)
+	o.Files = decodeAll(o.Files)
+	o.RootDylibs = decodeAll(o.RootDylibs)
+	o.Cyans = decodeAll(o.Cyans)
+	o.Icon = decodeURLPath(o.Icon)
+	o.PlistMerge = decodeURLPath(o.PlistMerge)
+	o.Entitlements = decodeURLPath(o.Entitlements)
+
 	if !strings.HasSuffix(o.Input, ".app") &&
 		!strings.HasSuffix(o.Input, ".ipa") &&
 		!strings.HasSuffix(o.Input, ".tipa") {
@@ -164,6 +178,29 @@ func (o *Options) validate() error {
 	}
 
 	return nil
+}
+
+// decodeURLPath decodes %XX URL escapes in a path (a space in a pasted
+// path is usually %20). On any malformed escape it returns the input
+// unchanged — a literal % is far more likely to be a real filename than a
+// typo to punish.
+func decodeURLPath(p string) string {
+	if !strings.Contains(p, "%") {
+		return p
+	}
+	dec, err := url.PathUnescape(p)
+	if err != nil {
+		return p
+	}
+	return dec
+}
+
+// decodeAll applies decodeURLPath to every element of a slice.
+func decodeAll(ps []string) []string {
+	for i, p := range ps {
+		ps[i] = decodeURLPath(p)
+	}
+	return ps
 }
 
 func hasPatch(patches []string, name string) bool {
