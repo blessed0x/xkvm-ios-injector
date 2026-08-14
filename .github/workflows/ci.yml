@@ -84,6 +84,22 @@ jobs:
       - name: Hoist var collision (verbose)
         if: matrix.os == 'macos-14'
         run: go test -race -v ./internal/rootless/ -run TestHoistVarCollision
+      # Script + plist fidelity (NOT native-gated — the fixture is plists
+      # and a control script only, so it also runs inside the suite-wide
+      # Test step on both legs). Pins the plutil-xml1 conversion of every
+      # payload plist, the LaunchDaemons/libSandy rewrites, and the
+      # DEBIAN/ script walk against the real upstream sed sequence.
+      - name: Scripts + plists (verbose)
+        if: matrix.os == 'macos-14'
+        run: go test -race -v ./internal/rootless/ -run TestRoothideScriptsAndPlistPatches
+      # Fixed-paths warning scope (non-Mach-O half is pure Go, runs on both
+      # legs; the Mach-O load-command audit half is toolchain-gated). Pins
+      # that the warning covers every walked payload file — text configs
+      # and binary assets warn, .png/.strings are excluded, and a missed
+      # /var/jb load-command rewrite is surfaced.
+      - name: Fixed-paths warning scope (verbose)
+        if: matrix.os == 'macos-14'
+        run: go test -race -v ./internal/rootless/ -run 'TestRoothideWarnFixedPathsNonMachO|TestRoothideWarnFixedPathsMachOAudit'
       # Generality smoke (macos-14 only, needs go + Xcode for Mach-O
       # fixtures): build ten hermetic fixture IPAs with fully generic names
       # and assert xkvm check's exit code on each — the same sweep that ran

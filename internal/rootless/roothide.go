@@ -17,11 +17,17 @@ package rootless
 //     patched Mach-O also gains a sibling .roothidepatch symlink to
 //     /usr/lib/DynamicPatches/AutoPatches.dylib (upstream's AutoPatches
 //     mechanism); --mode dynamic creates none.
-//  4. scripts + plists — the same sed path translations upstream applies
-//     (preinst/prerm/postinst/postrm/extrainst_, LaunchDaemons and libSandy
-//     plists)
-//  5. fixed-paths-warning — remaining /var/jb strings in converted Mach-O
-//     __cstring sections are reported, exactly like upstream's scan
+//  4. scripts + plists — the same sed path translations upstream applies,
+//     walking the whole package INCLUDING DEBIAN/ (upstream mv's DEBIAN
+//     into the walked root): preinst/prerm/postinst/postrm/extrainst_
+//     scripts get the /rootfs/ dance, every .plist is converted to XML1
+//     first (plutil -convert xml1 — the XML-syntax >-root patterns only
+//     match text), then LaunchDaemons and libSandy plists get their
+//     /var/jb and /rootfs/ rewrites
+//  5. fixed-paths-warning — surviving /var/jb strings are reported across
+//     the same walk upstream scans: Mach-O __cstring strings, a load-command
+//     audit for missed rewrites, and printable strings in other payload
+//     files (.png/.strings excluded, matching upstream's find loop)
 //
 // --pkgmirror mirrors the package to var/mobile/Library/pkgmirror with the
 // control dir renamed DEBIAN.<pkg> for roothide's package manager (plus any
@@ -45,6 +51,7 @@ import (
 	"github.com/xkvm/xkvm/internal/deb"
 	"github.com/xkvm/xkvm/internal/log"
 	"github.com/xkvm/xkvm/internal/macho"
+	"github.com/xkvm/xkvm/internal/plist"
 )
 
 // RoothideOutputArch is the architecture roothide packages are re-arch'd to.
@@ -387,11 +394,13 @@ func copyTree(src, dst string) error {
 
 // patchPayloadForRoothide walks the package and applies the Mach-O /var/jb →
 // @loader_path/.jbroot rewrites plus the script/plist path translations.
-// DEBIAN and the pkgmirror copy are skipped (mirrored, not installed). In
-// --mode auto, every patched Mach-O also gains a sibling <file>.roothidepatch
-// symlink to /usr/lib/DynamicPatches/AutoPatches.dylib — upstream's
-// AutoPatches mechanism (unconditional per Mach-O, exactly like the
-// reference's ln -s).
+// DEBIAN/ is walked too — upstream mv's it into the new root, so control
+// scripts (preinst/prerm/postinst/postrm/extrainst_) get the same sed dance
+// and DEBIAN plists get plutil-converted. Only the pkgmirror copy is skipped
+// (mirrored, not installed). In --mode auto, every patched Mach-O also
+// gains a sibling <file>.roothidepatch symlink to
+// /usr/lib/DynamicPatches/AutoPatches.dylib — upstream's AutoPatches
+// mechanism (unconditional per Mach-O, exactly like the reference's ln -s).
 func patchPayloadForRoothide(dir, mode string) error {
 	return filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -404,7 +413,7 @@ func patchPayloadForRoothide(dir, mode string) error {
 			return nil
 		}
 		rel, _ := filepath.Rel(dir, path)
-		if strings.HasPrefix(rel, "DEBIAN") || strings.Contains(rel, "var/mobile/Library/pkgmirror") {
+		if strings.Contains(rel, "var/mobile/Library/pkgmirror") {
 			return nil
 		}
 		is, err := macho.IsMachO(path)
@@ -438,11 +447,23 @@ func patchPayloadForRoothide(dir, mode string) error {
 				log.Infof("patched script %s", rel)
 			}
 		case strings.HasSuffix(rel, ".plist"):
+			// Upstream plutil -convert xml1 on every payload plist (patch.sh
+			// line 317), so the XML-syntax sed patterns below (e.g. the
+			// libSandy >-root rewrites) match binary plists too; XML plists
+			// are normalized. Like upstream under set -e, an unparseable
+			// .plist aborts the conversion.
+			if err := plist.ConvertToXML1(path); err != nil {
+				return fmt.Errorf("plutil-converting %s: %w", rel, err)
+			}
 			data, err := os.ReadFile(path)
 			if err != nil {
 				return err
 			}
-			switch dirn := filepath.Dir(rel); {
+			// dirn has no leading slash (rel is package-relative) while
+			// upstream's fpath is /-rooted — match on "/"+dirn so the
+			// LaunchDaemons/libSandy dir checks actually fire.
+			dirn := "/" + filepath.Dir(rel)
+			switch {
 			case strings.Contains(dirn, "/Library/LaunchDaemons"):
 				out := strings.ReplaceAll(string(data), "/var/jb/", "/")
 				if out != string(data) {
@@ -525,8 +546,10 @@ func jbrootReplace(s string) (string, bool) {
 }
 
 // scriptPathsRe matches the leading-space absolute-root patterns upstream
-// rewrites to /rootfs/ in scripts (applied only to unprotected paths).
-var scriptPathsRe = regexp.MustCompile(` (Applications|Library|private|System|sbin|bin|etc|lib|usr|var)/`)
+// rewrites to /rootfs/ in scripts (applied only to unprotected paths): the
+// upstream seds are ` /Applications/` etc. — space + slash + root — so the
+// pattern keeps the slash before the group.
+var scriptPathsRe = regexp.MustCompile(` /(Applications|Library|private|System|sbin|bin|etc|lib|usr|var)/`)
 
 var shebangRe = regexp.MustCompile(`(?m)^#!\s*/rootfs/`)
 
@@ -547,7 +570,7 @@ func patchScriptPaths(data []byte) []byte {
 	return []byte(s)
 }
 
-var sandyPathsRe = regexp.MustCompile(`>(Applications|Library|private|System|sbin|bin|etc|lib|usr|var)/`)
+var sandyPathsRe = regexp.MustCompile(`>/(Applications|Library|private|System|sbin|bin|etc|lib|usr|var)/`)
 
 // patchSandyPlist ports upstream's libSandy plist sed sequence (the >-root
 // variant of the script dance).
@@ -562,10 +585,23 @@ func patchSandyPlist(data []byte) []byte {
 	return []byte(s)
 }
 
-// warnRoothideFixedPaths scans converted Mach-O __cstring sections for
-// surviving /var/jb strings and warns about each (upstream's
-// "fixed-paths-warning" — informational; string tables are not rewritten by
-// the roothide pass).
+// warnRoothideFixedPaths scans the converted package for surviving /var/jb
+// strings and warns about each — upstream's "fixed-paths-warning", whose
+// `strings | grep /var/jb` runs over the SAME walked file set as the patch
+// loop (patch.sh lines 287/340), so non-Mach-O payload files are covered
+// too, not just Mach-O __cstring. In detail:
+//
+//   - Mach-O: __cstring strings (string tables are not rewritten by the
+//     roothide pass), plus a load-command audit — a surviving /var/jb
+//     dependency or rpath is a rewrite miss, which the upstream strings
+//     scan would also surface.
+//   - other payload files: printable strings (strings(1)-style runs),
+//     with .png/.strings extensions excluded exactly like upstream's find
+//     loop (`! [[ {png,strings} =~ ... ]]`). DEBIAN/ is walked (it is in
+//     the walked root upstream), so patched control scripts that still
+//     carry /var/jb (deliberately restored by the sed dance) warn too.
+//
+// Informational, never fatal.
 func warnRoothideFixedPaths(dir string) error {
 	warned := 0
 	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
@@ -578,20 +614,58 @@ func warnRoothideFixedPaths(dir string) error {
 			return nil
 		}
 		rel, _ := filepath.Rel(dir, path)
-		if strings.HasPrefix(rel, "DEBIAN") || strings.Contains(rel, "pkgmirror") {
+		if strings.Contains(rel, "pkgmirror") {
 			return nil
 		}
 		is, err := macho.IsMachO(path)
-		if err != nil || !is {
+		if err != nil {
 			return err
 		}
-		strs, err := macho.CStrings(path)
-		if err != nil {
-			return fmt.Errorf("scanning __cstring of %s: %w", rel, err)
+		if is {
+			b := macho.Bin{Path: path}
+			deps, err := b.AllDependencies()
+			if err != nil {
+				return fmt.Errorf("reading dependencies of %s for fixed-path audit: %w", rel, err)
+			}
+			for _, dep := range deps {
+				if strings.Contains(dep, "/var/jb") {
+					log.Warnf("fixed-paths-warning: %s still depends on %s (load-command rewrite missed)", rel, dep)
+					warned++
+				}
+			}
+			rpaths, err := b.Rpaths()
+			if err != nil {
+				return fmt.Errorf("reading rpaths of %s for fixed-path audit: %w", rel, err)
+			}
+			for _, rp := range rpaths {
+				if strings.Contains(rp, "/var/jb") {
+					log.Warnf("fixed-paths-warning: %s still carries rpath %s (rpath rewrite missed)", rel, rp)
+					warned++
+				}
+			}
+			strs, err := macho.CStrings(path)
+			if err != nil {
+				return fmt.Errorf("scanning __cstring of %s: %w", rel, err)
+			}
+			for _, s := range strs {
+				if strings.Contains(s.Value, "/var/jb") {
+					log.Warnf("fixed-paths-warning: %s still contains %s (string tables not rewritten)", rel, s.Value)
+					warned++
+				}
+			}
+			return nil
 		}
-		for _, s := range strs {
-			if strings.Contains(s.Value, "/var/jb") {
-				log.Warnf("fixed-paths-warning: %s still contains %s (string tables not rewritten)", rel, s.Value)
+		ext := strings.ToLower(filepath.Ext(rel))
+		if ext == ".png" || ext == ".strings" {
+			return nil // upstream's find-loop exclusion
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		for _, run := range printableRuns(data) {
+			if strings.Contains(run, "/var/jb") {
+				log.Warnf("fixed-paths-warning: %s still contains %s (not rewritten)", rel, run)
 				warned++
 			}
 		}
@@ -601,4 +675,30 @@ func warnRoothideFixedPaths(dir string) error {
 		log.Warnf("fixed-paths: %d /var/jb string(s) survive — verify against the roothide runtime", warned)
 	}
 	return err
+}
+
+// printableRuns extracts strings(1)-style printable ASCII runs (bytes 0x20-
+// 0x7e, min length 4) from arbitrary bytes — the shape upstream's
+// `strings - "$file" | grep /var/jb` matches on non-Mach-O payload files.
+// Any run containing /var/jb is at least 8 bytes, so the min length never
+// hides it.
+func printableRuns(data []byte) []string {
+	var runs []string
+	start := -1
+	for i, b := range data {
+		if b >= 0x20 && b <= 0x7e {
+			if start < 0 {
+				start = i
+			}
+			continue
+		}
+		if start >= 0 && i-start >= 4 {
+			runs = append(runs, string(data[start:i]))
+		}
+		start = -1
+	}
+	if start >= 0 && len(data)-start >= 4 {
+		runs = append(runs, string(data[start:]))
+	}
+	return runs
 }

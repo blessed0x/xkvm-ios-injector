@@ -57,6 +57,26 @@ func WriteXML(path string, d Dict) error {
 	return os.WriteFile(path, data, 0o644)
 }
 
+// ConvertToXML1 ports `plutil -convert xml1`: decodes a binary or XML plist
+// (any root type) and re-serializes it as XML1. This is how text-level plist
+// surgery (e.g. roothide's >-root path rewrites) can match binary plists.
+// Like plutil under `set -e`, a file that is not a valid plist is an error.
+func ConvertToXML1(path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var v any
+	if _, err := howett.Unmarshal(data, &v); err != nil {
+		return fmt.Errorf("plutil -convert xml1 equivalent: not a valid plist: %w", err)
+	}
+	out, err := howett.Marshal(v, howett.XMLFormat)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, out, 0o644)
+}
+
 // Equal deep-compares two dicts (test + merge semantics).
 func Equal(a, b Dict) bool {
 	return reflect.DeepEqual(a, b)

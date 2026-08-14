@@ -486,13 +486,25 @@ app). In `--mode auto`, every patched payload Mach-O also gains a sibling
 runtime applies the auto-patch treatment to binaries carrying such a
 sibling); `--mode dynamic` creates none. Signatures are removed (deviation
 below).
-4. **Scripts + plists** — the exact sed path translations upstream applies
-(`preinst`/`prerm`/`postinst`/`postrm`/`extrainst_`, LaunchDaemons and
-libSandy plists), ported with the /var/jb protect/unprotect dance order
-preserved.
-5. **Fixed-paths warning** — surviving `/var/jb` strings in converted Mach-O
-`__cstring` sections are reported (upstream's "fixed-paths-warning"; string
-tables are not rewritten by the roothide pass).
+4. **Scripts + plists** — the exact sed path translations upstream applies,
+walking the whole package **including `DEBIAN/`** (upstream mv's DEBIAN
+into the walked root, so control scripts are patched too):
+`preinst`/`prerm`/`postinst`/`postrm`/`extrainst_` get the /rootfs/ dance,
+every `.plist` is first converted to XML1 (a pure-Go `plutil -convert
+xml1` port in `internal/plist` — the XML-syntax `>/<`-style patterns only
+match text, and a naive byte replace on a binary plist corrupts its length
+prefixes), then LaunchDaemons plists get `/var/jb/` → `/` and libSandy
+plists get the `>`-root /rootfs/ rewrites, with the /var/jb
+protect/unprotect dance order preserved. On roothide the jbroot IS the
+root, so `/var/jb/...` script paths are stripped to `/...`; a bare
+`/var/jb` is kept (upstream's two restore seds, pinned against the real
+sed sequence).
+5. **Fixed-paths warning** — surviving `/var/jb` strings are reported over
+the same walked set upstream's `strings | grep /var/jb` covers: Mach-O
+`__cstring` strings (string tables are not rewritten by the roothide pass),
+plus a load-command audit for missed `/var/jb` dep/rpath rewrites, plus
+printable strings in other payload files with `.png`/`.strings` excluded
+(exactly upstream's find-loop exclusion). Informational, never fatal.
 
 `--pkgmirror` mirrors the (post-hoist) package to
 `var/mobile/Library/pkgmirror` with the control dir renamed
