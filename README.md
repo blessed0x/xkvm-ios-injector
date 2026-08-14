@@ -89,6 +89,43 @@ Check that it works:
 xkvm --help
 ```
 
+### Shell completion (optional)
+
+Tab-completion for flags and subcommands is built in. Generate the script for your shell and load it from your config file:
+
+**bash:**
+
+```bash
+xkvm completion bash | sudo tee /etc/bash_completion.d/xkvm > /dev/null
+```
+
+Or, if you use Homebrew's bash (or just want it per-user):
+
+```bash
+mkdir -p ~/.bash_completion.d
+xkvm completion bash > ~/.bash_completion.d/xkvm
+# add this line to ~/.bashrc:
+# source ~/.bash_completion.d/xkvm
+```
+
+**zsh:**
+
+```zsh
+mkdir -p ~/.zfunc
+xkvm completion zsh > ~/.zfunc/_xkvm
+# add these lines to ~/.zshrc:
+# fpath+=~/.zfunc
+# autoload -Uz compinit && compinit
+```
+
+**fish:**
+
+```fish
+xkvm completion fish > ~/.config/fish/completions/xkvm.fish
+```
+
+If you installed xkvm to a different location, make sure that location is on your `PATH` so the completion script can find it.
+
 ## Quick start
 
 **Inject a tweak into an app:**
