@@ -124,9 +124,21 @@ func serializeTOC(f *macho.File, buf *bytes.Buffer) error {
 	}
 	f.NCommands = uint32(len(f.Loads))
 	f.SizeCommands = uint32(cmds.Len())
-	if err := f.FileHeader.Write(buf, f.ByteOrder); err != nil {
+	var hdr bytes.Buffer
+	if err := f.FileHeader.Write(&hdr, f.ByteOrder); err != nil {
 		return fmt.Errorf("failed to write file header: %v", err)
 	}
+	h := hdr.Bytes()
+	// go-macho's FileHeader.Write always emits the 8-field struct (32 bytes),
+	// but a 32-bit Mach-O header is 7 fields (28 bytes, no Reserved). The
+	// 4-byte overrun shifts every load command and breaks re-parsing with
+	// "invalid command block size in record at byte 0x1c" (the stale Reserved
+	// field is read as cmd=1, cmdsize=1). FileHeader.Put knows the rule
+	// (returns 28 for Magic32); mirror it here.
+	if f.Magic == types.Magic32 {
+		h = h[:28]
+	}
+	buf.Write(h)
 	buf.Write(cmds.Bytes())
 	return nil
 }
