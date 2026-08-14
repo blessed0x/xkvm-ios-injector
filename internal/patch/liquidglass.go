@@ -5,9 +5,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/xkvm/xkvm/internal/log"
-	"github.com/xkvm/xkvm/internal/macho"
-	"github.com/xkvm/xkvm/internal/plist"
+	"github.com/xscope0/xkvm-ios-injector/internal/log"
+	"github.com/xscope0/xkvm-ios-injector/internal/macho"
+	"github.com/xscope0/xkvm-ios-injector/internal/plist"
 )
 
 func init() {

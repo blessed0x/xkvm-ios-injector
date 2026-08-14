@@ -23,8 +23,8 @@ cp "$T/app" "$T/ldid-resign" && ldid -S -M "$T/ldid-resign"
 cp "$T/app" "$T/xkvm"
 printf '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict><key>get-task-allow</key><true/></dict></plist>\n' > "$T/ents.plist"
 mkdir -p ./.verifydriver
-printf 'package main\nimport ("fmt"; "os"; "github.com/xkvm/xkvm/internal/macho")\nfunc main() {\n\tb := macho.Bin{Path: os.Args[1]}\n\te, err := os.ReadFile(os.Args[2]); if err != nil { fmt.Println(err); os.Exit(1) }\n\tif err := b.SignWithEntitlements(e, ""); err != nil { fmt.Println("ERR", err); os.Exit(1) }\n}\n' > ./.verifydriver/main.go
-go run github.com/xkvm/xkvm/.verifydriver "$T/xkvm" "$T/ents.plist" 2>&1 | tail -2
+printf 'package main\nimport ("fmt"; "os"; "github.com/xscope0/xkvm-ios-injector/internal/macho")\nfunc main() {\n\tb := macho.Bin{Path: os.Args[1]}\n\te, err := os.ReadFile(os.Args[2]); if err != nil { fmt.Println(err); os.Exit(1) }\n\tif err := b.SignWithEntitlements(e, ""); err != nil { fmt.Println("ERR", err); os.Exit(1) }\n}\n' > ./.verifydriver/main.go
+go run github.com/xscope0/xkvm-ios-injector/.verifydriver "$T/xkvm" "$T/ents.plist" 2>&1 | tail -2
 rm -rf ./.verifydriver
 
 # 3. dump CDs via go-macho's parser
@@ -78,7 +78,7 @@ func join(s []string, sep string) string {
 	return out
 }
 EOF
-go run github.com/xkvm/xkvm/.verifydriver "$T/apple" "$T/ldid" "$T/ldid-resign" "$T/xkvm"
+go run github.com/xscope0/xkvm-ios-injector/.verifydriver "$T/apple" "$T/ldid" "$T/ldid-resign" "$T/xkvm"
 rm -rf ./.verifydriver
 
 echo "--- codesign --verify results ---"

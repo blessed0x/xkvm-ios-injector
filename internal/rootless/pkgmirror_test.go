@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xkvm/xkvm/internal/deb"
-	"github.com/xkvm/xkvm/internal/macho"
-	"github.com/xkvm/xkvm/internal/testutil"
+	"github.com/xscope0/xkvm-ios-injector/internal/deb"
+	"github.com/xscope0/xkvm-ios-injector/internal/macho"
+	"github.com/xscope0/xkvm-ios-injector/internal/testutil"
 )
 
 // buildRootlessFixture builds a rootless deb (payload under var/jb, a loose

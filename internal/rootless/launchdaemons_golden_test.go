@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xkvm/xkvm/internal/plist"
+	"github.com/xscope0/xkvm-ios-injector/internal/plist"
 )
 
 // TestLaunchDaemonsGoldenReal pins the LaunchDaemons plist branch against

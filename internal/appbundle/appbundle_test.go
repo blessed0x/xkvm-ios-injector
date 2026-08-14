@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xkvm/xkvm/internal/macho"
-	"github.com/xkvm/xkvm/internal/plist"
-	"github.com/xkvm/xkvm/internal/testutil"
+	"github.com/xscope0/xkvm-ios-injector/internal/macho"
+	"github.com/xscope0/xkvm-ios-injector/internal/plist"
+	"github.com/xscope0/xkvm-ios-injector/internal/testutil"
 )
 
 func openBundle(t *testing.T, appDir string) *Bundle {

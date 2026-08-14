@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xkvm/xkvm/internal/deb"
+	"github.com/xscope0/xkvm-ios-injector/internal/deb"
 )
 
 // buildControlFixture builds a rootless deb (payload under var/jb) with the

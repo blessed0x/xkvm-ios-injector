@@ -18,8 +18,8 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/xkvm/xkvm/internal/ipa"
-	"github.com/xkvm/xkvm/internal/plist"
+	"github.com/xscope0/xkvm-ios-injector/internal/ipa"
+	"github.com/xscope0/xkvm-ios-injector/internal/plist"
 )
 
 // SkipUnlessNativeToolchain skips the test unless this host can produce real

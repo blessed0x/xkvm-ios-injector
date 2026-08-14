@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xkvm/xkvm/internal/testutil"
+	"github.com/xscope0/xkvm-ios-injector/internal/testutil"
 )
 
 func newTestBin(t *testing.T) Bin {

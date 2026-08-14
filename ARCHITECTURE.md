@@ -140,7 +140,7 @@ already has, but we should document provenance + licenses in NOTICE before any p
 
 ```
 xKVM/
-├── go.mod                        # module github.com/xkvm/xkvm (rename on publish)
+├── go.mod                        # module github.com/xscope0/xkvm-ios-injector (rename on publish)
 ├── cmd/xkvm/
 │   └── main.go                   # cobra root: cyan-compatible flags
 ├── internal/
@@ -708,7 +708,7 @@ repack .ipa (compression level, exclude hidden files) | emit .app
 
 ## 9. Distribution & install
 
-- `go install github.com/xkvm/xkvm@latest` (or `./cmd/xkvm` build) → global binary.
+- `go install github.com/xscope0/xkvm-ios-injector@latest` (or `./cmd/xkvm` build) → global binary.
 - Release flow: goreleaser (darwin arm64/x86_64 + linux amd64/arm64 tarballs), Homebrew tap.
 - Jailbroken iOS: single static arm64 Mach-O, ad-hoc signed, no runtime deps — the upgrade over
   cyan's Python-on-device story. M5 scope.
@@ -731,7 +731,7 @@ repack .ipa (compression level, exclude hidden files) | emit .app
 
 ## 11. Open decisions (resolved at M0)
 
-1. **Module path** — placeholder `github.com/xkvm/xkvm`; set real org on publish.
+1. **Module path** — placeholder `github.com/xscope0/xkvm-ios-injector`; set real org on publish.
 2. **`xkvm fetch` UX** — **resolved (M4):** folded into `-f` + `--fetch` (tweak ids resolve through Canister/MobileAPT into debs before injection).
 3. **`.cyan` compat** — must accept existing cyan-generated files verbatim (backward compat is a
    hard requirement; `xkvm cgen` output stays byte-compatible).

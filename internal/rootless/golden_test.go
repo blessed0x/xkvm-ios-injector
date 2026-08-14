@@ -11,9 +11,9 @@ import (
 	gmmacho "github.com/blacktop/go-macho"
 	"github.com/blacktop/go-macho/types"
 
-	"github.com/xkvm/xkvm/internal/deb"
-	"github.com/xkvm/xkvm/internal/log"
-	"github.com/xkvm/xkvm/internal/macho"
+	"github.com/xscope0/xkvm-ios-injector/internal/deb"
+	"github.com/xscope0/xkvm-ios-injector/internal/log"
+	"github.com/xscope0/xkvm-ios-injector/internal/macho"
 )
 
 // goldenShadowDeb is the committed real-world fixture: Shadow_3.0-0.rc3.deb

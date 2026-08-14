@@ -20,7 +20,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/xkvm/xkvm/internal/log"
+	"github.com/xscope0/xkvm-ios-injector/internal/log"
 )
 
 // controlScriptNames are the dpkg control scripts rootless-patcher treats as

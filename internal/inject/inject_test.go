@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/xkvm/xkvm/internal/macho"
-	"github.com/xkvm/xkvm/internal/testutil"
+	"github.com/xscope0/xkvm-ios-injector/internal/macho"
+	"github.com/xscope0/xkvm-ios-injector/internal/testutil"
 )
 
 // TestInjectEndToEnd builds a real app bundle and a real Mach-O tweak, gives

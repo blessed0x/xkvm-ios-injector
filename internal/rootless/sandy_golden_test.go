@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xkvm/xkvm/internal/deb"
-	"github.com/xkvm/xkvm/internal/plist"
+	"github.com/xscope0/xkvm-ios-injector/internal/deb"
+	"github.com/xscope0/xkvm-ios-injector/internal/plist"
 )
 
 // readPinnedFixture reads a committed fixture and asserts its sha256,

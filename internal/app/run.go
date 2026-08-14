@@ -9,16 +9,16 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/xkvm/xkvm/internal/appbundle"
-	"github.com/xkvm/xkvm/internal/artifact"
-	"github.com/xkvm/xkvm/internal/cyanfile"
-	"github.com/xkvm/xkvm/internal/extras"
-	"github.com/xkvm/xkvm/internal/fetch"
-	"github.com/xkvm/xkvm/internal/inject"
-	"github.com/xkvm/xkvm/internal/ipa"
-	"github.com/xkvm/xkvm/internal/log"
-	"github.com/xkvm/xkvm/internal/patch"
-	"github.com/xkvm/xkvm/internal/plist"
+	"github.com/xscope0/xkvm-ios-injector/internal/appbundle"
+	"github.com/xscope0/xkvm-ios-injector/internal/artifact"
+	"github.com/xscope0/xkvm-ios-injector/internal/cyanfile"
+	"github.com/xscope0/xkvm-ios-injector/internal/extras"
+	"github.com/xscope0/xkvm-ios-injector/internal/fetch"
+	"github.com/xscope0/xkvm-ios-injector/internal/inject"
+	"github.com/xscope0/xkvm-ios-injector/internal/ipa"
+	"github.com/xscope0/xkvm-ios-injector/internal/log"
+	"github.com/xscope0/xkvm-ios-injector/internal/patch"
+	"github.com/xscope0/xkvm-ios-injector/internal/plist"
 )
 
 // Run executes the xkvm pipeline, mirroring cyan's logic.main() ordering:

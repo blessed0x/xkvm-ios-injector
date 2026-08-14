@@ -19,7 +19,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xkvm/xkvm/internal/log"
+	"github.com/xscope0/xkvm-ios-injector/internal/log"
 )
 
 // minZipTime is the oldest representable zip timestamp. Entries with a zero

@@ -21,10 +21,10 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/xkvm/xkvm/internal/deb"
-	"github.com/xkvm/xkvm/internal/extras"
-	"github.com/xkvm/xkvm/internal/log"
-	"github.com/xkvm/xkvm/internal/macho"
+	"github.com/xscope0/xkvm-ios-injector/internal/deb"
+	"github.com/xscope0/xkvm-ios-injector/internal/extras"
+	"github.com/xscope0/xkvm-ios-injector/internal/log"
+	"github.com/xscope0/xkvm-ios-injector/internal/macho"
 )
 
 // Mode selects the hooking runtime used to satisfy substrate-style

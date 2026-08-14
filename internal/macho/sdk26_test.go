@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/blacktop/go-macho/types"
-	"github.com/xkvm/xkvm/internal/testutil"
+	"github.com/xscope0/xkvm-ios-injector/internal/testutil"
 )
 
 // readSdk returns the first LC_BUILD_VERSION sdk field of a Mach-O slice (0 if

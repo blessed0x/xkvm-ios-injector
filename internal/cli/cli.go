@@ -10,10 +10,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/xkvm/xkvm/internal/app"
-	"github.com/xkvm/xkvm/internal/cyanfile"
-	"github.com/xkvm/xkvm/internal/log"
-	"github.com/xkvm/xkvm/internal/patch"
+	"github.com/xscope0/xkvm-ios-injector/internal/app"
+	"github.com/xscope0/xkvm-ios-injector/internal/cyanfile"
+	"github.com/xscope0/xkvm-ios-injector/internal/log"
+	"github.com/xscope0/xkvm-ios-injector/internal/patch"
 )
 
 // Runner is the injectable pipeline entry point. Tests replace it with a

@@ -1,4 +1,4 @@
-module github.com/xkvm/xkvm
+module github.com/xscope0/xkvm-ios-injector
 
 go 1.26.4
 

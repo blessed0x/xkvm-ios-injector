@@ -14,15 +14,15 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xkvm/xkvm/internal/appbundle"
-	"github.com/xkvm/xkvm/internal/artifact"
-	"github.com/xkvm/xkvm/internal/cyanfile"
-	"github.com/xkvm/xkvm/internal/ipa"
-	"github.com/xkvm/xkvm/internal/log"
-	"github.com/xkvm/xkvm/internal/macho"
-	"github.com/xkvm/xkvm/internal/patch"
-	"github.com/xkvm/xkvm/internal/plist"
-	"github.com/xkvm/xkvm/internal/testutil"
+	"github.com/xscope0/xkvm-ios-injector/internal/appbundle"
+	"github.com/xscope0/xkvm-ios-injector/internal/artifact"
+	"github.com/xscope0/xkvm-ios-injector/internal/cyanfile"
+	"github.com/xscope0/xkvm-ios-injector/internal/ipa"
+	"github.com/xscope0/xkvm-ios-injector/internal/log"
+	"github.com/xscope0/xkvm-ios-injector/internal/macho"
+	"github.com/xscope0/xkvm-ios-injector/internal/patch"
+	"github.com/xscope0/xkvm-ios-injector/internal/plist"
+	"github.com/xscope0/xkvm-ios-injector/internal/testutil"
 )
 
 // TestRunFullPipelineE2E runs the entire xkvm pipeline against a real IPA:

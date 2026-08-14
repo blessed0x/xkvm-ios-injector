@@ -41,9 +41,9 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/xkvm/xkvm/internal/deb"
-	"github.com/xkvm/xkvm/internal/log"
-	"github.com/xkvm/xkvm/internal/macho"
+	"github.com/xscope0/xkvm-ios-injector/internal/deb"
+	"github.com/xscope0/xkvm-ios-injector/internal/log"
+	"github.com/xscope0/xkvm-ios-injector/internal/macho"
 )
 
 // RuntimeDep is the dependency alternation upstream appends to Depends,

@@ -6,10 +6,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xkvm/xkvm/internal/artifact"
-	"github.com/xkvm/xkvm/internal/deb"
-	"github.com/xkvm/xkvm/internal/plist"
-	"github.com/xkvm/xkvm/internal/testutil"
+	"github.com/xscope0/xkvm-ios-injector/internal/artifact"
+	"github.com/xscope0/xkvm-ios-injector/internal/deb"
+	"github.com/xscope0/xkvm-ios-injector/internal/plist"
+	"github.com/xscope0/xkvm-ios-injector/internal/testutil"
 )
 
 // TestDebifyThenUndebRoundTrip exercises the dylib→deb→dylib loop: Debify

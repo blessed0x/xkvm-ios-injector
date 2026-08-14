@@ -10,11 +10,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xkvm/xkvm/internal/app"
-	"github.com/xkvm/xkvm/internal/cyanfile"
-	"github.com/xkvm/xkvm/internal/log"
-	"github.com/xkvm/xkvm/internal/macho"
-	"github.com/xkvm/xkvm/internal/testutil"
+	"github.com/xscope0/xkvm-ios-injector/internal/app"
+	"github.com/xscope0/xkvm-ios-injector/internal/cyanfile"
+	"github.com/xscope0/xkvm-ios-injector/internal/log"
+	"github.com/xscope0/xkvm-ios-injector/internal/macho"
+	"github.com/xscope0/xkvm-ios-injector/internal/testutil"
 )
 
 // runCapturesOptions returns a Runner that records the parsed options.

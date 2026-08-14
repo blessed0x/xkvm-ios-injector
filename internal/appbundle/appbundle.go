@@ -15,9 +15,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/xkvm/xkvm/internal/log"
-	"github.com/xkvm/xkvm/internal/macho"
-	"github.com/xkvm/xkvm/internal/plist"
+	"github.com/xscope0/xkvm-ios-injector/internal/log"
+	"github.com/xscope0/xkvm-ios-injector/internal/macho"
+	"github.com/xscope0/xkvm-ios-injector/internal/plist"
 )
 
 // Bundle is an extracted app bundle plus its parsed Info.plist and main
