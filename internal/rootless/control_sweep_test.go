@@ -207,3 +207,72 @@ func TestRoothideConflictsMangle(t *testing.T) {
 		})
 	}
 }
+
+// TestRoothideDynamicControlLayout pins the dynamic-mode control edits
+// against upstream's DynamicPatches block (patch.sh): the Version line is
+// MOVED to the end of the file (`sed -i "/^Version\:/d"` + append) with the
+// ~roothide suffix, and the patches-<pkg> Pre-Depends is PREPENDED before
+// any existing Pre-Depends value (`s/^Pre-Depends\:/Pre-Depends:
+// $PreDepends,/`). Both surfaced by the member-by-member comparison of
+// --mode dynamic against upstream.
+func TestRoothideDynamicControlLayout(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		preDepends string   // input Pre-Depends line, or "" for none
+		wantLines  []string // expected tail of the converted control
+	}{
+		{
+			name:       "no existing Pre-Depends",
+			preDepends: "",
+			// Upstream appends Version, then the Pre-Depends.
+			wantLines: []string{
+				"Version: 1.0~roothide",
+				"Pre-Depends: patches-dynlayout(= 1.0~roothide)",
+			},
+		},
+		{
+			name:       "existing Pre-Depends",
+			preDepends: "Pre-Depends: mobilesubstrate (>= 0.9.5000)",
+			// The existing Pre-Depends is edited in place (new dep first),
+			// Version moves to the very end.
+			wantLines: []string{
+				"Version: 1.0~roothide",
+			},
+			// Pre-Depends assertion is separate (it stays in position).
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tmp := t.TempDir()
+			control := "Package: dynlayout\nVersion: 1.0\nArchitecture: iphoneos-arm64\n"
+			if tc.preDepends != "" {
+				control += tc.preDepends + "\n"
+			}
+			control += "Depends: mobilesubstrate\nDescription: dynamic layout test\nMaintainer: xkvm\n"
+			in := buildControlFixture(t, tmp, control)
+			out := filepath.Join(tmp, "roothide.deb")
+			if err := ConvertToRoothide(in, out, false, "dynamic"); err != nil {
+				t.Fatalf("ConvertToRoothide: %v", err)
+			}
+			unpacked := filepath.Join(tmp, "unpacked")
+			if err := deb.Unpack(out, unpacked); err != nil {
+				t.Fatal(err)
+			}
+			ctl, err := os.ReadFile(filepath.Join(unpacked, "DEBIAN", "control"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := string(ctl)
+			lines := strings.Split(strings.TrimSuffix(got, "\n"), "\n")
+			for i, want := range tc.wantLines {
+				if lines[len(lines)-len(tc.wantLines)+i] != want {
+					t.Errorf("control tail line %d = %q, want %q; got:\n%s", len(lines)-len(tc.wantLines)+i, lines[len(lines)-len(tc.wantLines)+i], want, got)
+				}
+			}
+			if tc.name == "existing Pre-Depends" {
+				if !strings.Contains(got, "Pre-Depends: patches-dynlayout(= 1.0~roothide), mobilesubstrate (>= 0.9.5000)\n") {
+					t.Errorf("existing Pre-Depends not prepended new-first; got:\n%s", got)
+				}
+			}
+		})
+	}
+}

@@ -303,6 +303,27 @@ func editControlRoothide(dir, mode string) error {
 	case "dynamic":
 		preDepends = joinPreDepends(preDepends, fmt.Sprintf("patches-%s(= %s)", pkg, versionValue(entries, "~roothide")))
 	}
+	// Upstream's DynamicPatches block MOVES Version to the end of the file
+	// (`sed -i "/^Version\:/d"` then `echo "Version: ...~roothide" >>`).
+	// Field order is semantically irrelevant to dpkg, but the reference's
+	// observable output has Version last, and the member-by-member
+	// comparison against upstream surfaced this as the one control
+	// divergence in dynamic mode — match it.
+	if mode == "dynamic" {
+		idx := -1
+		v := "~roothide" // upstream's DEB_VERSION is empty when absent
+		for i := range entries {
+			if entries[i].key == "Version" {
+				idx = i
+				v = entries[i].value
+				break
+			}
+		}
+		if idx >= 0 {
+			entries = append(entries[:idx], entries[idx+1:]...)
+		}
+		entries = append(entries, controlEntry{key: "Version", value: v})
+	}
 	if preDepends != "" && mode != "" {
 		found := false
 		for i := range entries {
@@ -352,7 +373,10 @@ func joinPreDepends(existing, add string) string {
 	if existing == "" {
 		return add
 	}
-	return existing + ", " + add
+	// Upstream prepends the new dep before any existing value
+	// (`s/^Pre-Depends\:/Pre-Depends: $PreDepends,/`):
+	// "Pre-Depends: patches-<pkg>(= ...), <existing>".
+	return add + ", " + existing
 }
 
 func versionValue(entries []controlEntry, suffix string) string {

@@ -484,10 +484,16 @@ of silently producing a broken hoist. Then `Architecture → iphoneos-arm64e`;
 the `Conflicts` "roothide" mangle; and the mode-dependent edits: default
 adds none, `--mode auto` adds `rootless-compat(>= 0.9)`, `--mode dynamic`
 adds a `~roothide` version suffix plus a `patches-<pkg>(= <ver>~roothide)`
-Pre-Depends. The parse/render round-trip strips blank lines (upstream
-`sed -i '/^$/d'`); only the Architecture *field* is rewritten — upstream's
-whole-file `s|iphoneos-arm|iphoneos-arm64e|g` would corrupt a Description
-that mentions the arch (documented deviation).
+Pre-Depends. In `--mode dynamic` the Version line is MOVED to the end of
+the file and the patches Pre-Depends is PREPENDED before any existing
+value, matching upstream's `sed -i "/^Version\:/d"` + append and
+`s/^Pre-Depends\:/Pre-Depends: $PreDepends,/` byte-for-byte (verified by
+the member-by-member mode comparison; field order is semantically
+irrelevant to dpkg but the reference's observable output is matched). The
+parse/render round-trip strips blank lines (upstream `sed -i '/^$/d'`);
+only the Architecture *field* is rewritten — upstream's whole-file
+`s|iphoneos-arm|iphoneos-arm64e|g` would corrupt a Description that
+mentions the arch (documented deviation).
 3. **Mach-O** — every `/var/jb/...` load-command dependency and LC_RPATH is
 rewritten to `@loader_path/.jbroot/...` (the roothide bootstrap lives inside
 each app's container at `.jbroot`, so the jailbreak is invisible to the
