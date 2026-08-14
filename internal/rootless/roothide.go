@@ -751,7 +751,10 @@ func patchSandyPlist(data []byte) []byte {
 // strings and warns about each — upstream's "fixed-paths-warning", whose
 // `strings | grep /var/jb` runs over the SAME walked file set as the patch
 // loop (patch.sh lines 287/340), so non-Mach-O payload files are covered
-// too, not just Mach-O __cstring. In detail:
+// too, not just Mach-O __cstring. Warnings are emitted in upstream's banner
+// shape (patch.sh lines 341-347): a `=> <path>` line for non-Mach-O files
+// only, then a `*****fixed-paths-warnning*****` block with each surviving
+// string on its own line — upstream's spelling included. In detail:
 //
 //   - Mach-O: __cstring strings (string tables are not rewritten by the
 //     roothide pass), plus a load-command audit — a surviving /var/jb
@@ -783,6 +786,7 @@ func warnRoothideFixedPaths(dir string) error {
 		if err != nil {
 			return err
 		}
+		var strs []string
 		if is {
 			b := macho.Bin{Path: path}
 			deps, err := b.AllDependencies()
@@ -791,8 +795,7 @@ func warnRoothideFixedPaths(dir string) error {
 			}
 			for _, dep := range deps {
 				if strings.Contains(dep, "/var/jb") {
-					log.Warnf("fixed-paths-warning: %s still depends on %s (load-command rewrite missed)", rel, dep)
-					warned++
+					strs = append(strs, dep)
 				}
 			}
 			rpaths, err := b.Rpaths()
@@ -801,35 +804,38 @@ func warnRoothideFixedPaths(dir string) error {
 			}
 			for _, rp := range rpaths {
 				if strings.Contains(rp, "/var/jb") {
-					log.Warnf("fixed-paths-warning: %s still carries rpath %s (rpath rewrite missed)", rel, rp)
-					warned++
+					strs = append(strs, rp)
 				}
 			}
-			strs, err := macho.CStrings(path)
+			cs, err := macho.CStrings(path)
 			if err != nil {
 				return fmt.Errorf("scanning __cstring of %s: %w", rel, err)
 			}
-			for _, s := range strs {
+			for _, s := range cs {
 				if strings.Contains(s.Value, "/var/jb") {
-					log.Warnf("fixed-paths-warning: %s still contains %s (string tables not rewritten)", rel, s.Value)
-					warned++
+					strs = append(strs, s.Value)
 				}
 			}
-			return nil
-		}
-		ext := strings.ToLower(filepath.Ext(rel))
-		if ext == ".png" || ext == ".strings" {
-			return nil // upstream's find-loop exclusion
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		for _, run := range printableRuns(data) {
-			if strings.Contains(run, "/var/jb") {
-				log.Warnf("fixed-paths-warning: %s still contains %s (not rewritten)", rel, run)
-				warned++
+		} else {
+			ext := strings.ToLower(filepath.Ext(rel))
+			if ext == ".png" || ext == ".strings" {
+				return nil // upstream's find-loop exclusion
 			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			for _, run := range printableRuns(data) {
+				if strings.Contains(run, "/var/jb") {
+					strs = append(strs, run)
+				}
+			}
+		}
+		if len(strs) > 0 {
+			warned += len(strs)
+			// Display path package-relative with the leading slash, matching
+			// upstream's fpath; the payload already carries var/jb in rel.
+			warnFixedPathsBlock("/"+rel, is, strs)
 		}
 		return nil
 	})

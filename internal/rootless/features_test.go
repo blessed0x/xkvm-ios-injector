@@ -272,7 +272,8 @@ func TestWarnFixedPaths(t *testing.T) {
 		t.Fatalf("WarnFixedPaths: %v", err)
 	}
 	got := buf.String()
-	if !strings.Contains(got, "fixed-paths-warning") {
+	// Upstream's banner shape (patch.sh lines 341-347, spelling included).
+	if !strings.Contains(got, "*****fixed-paths-warnning*****") {
 		t.Fatalf("no fixed-paths warning emitted; output:\n%s", got)
 	}
 	if !strings.Contains(got, "/Library/MobileSubstrate/DynamicLibraries/Leftover.dylib") {

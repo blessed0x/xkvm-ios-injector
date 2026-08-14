@@ -601,13 +601,26 @@ func contains(list []string, s string) bool {
 // to find rootful paths the conversion did not rewrite.
 var fixedPathRe = regexp.MustCompile(`/(?:Applications|Library|usr|var|etc|bin|sbin|tmp|lib|private|System)/[A-Za-z0-9_./+~-]*`)
 
+// warnFixedPathsBlock emits upstream's fixed-paths banner for one affected
+// file (patch.sh lines 341-347): the `=> <path>` line for non-Mach-O files
+// only (upstream's elif), then a single block with each surviving string on
+// its own line, closed by the asterisk line. The banner spelling
+// ("warnning") is upstream's; only the leading "[?]" log marker is xkvm's.
+func warnFixedPathsBlock(displayPath string, isMachO bool, strs []string) {
+	if !isMachO {
+		log.Warnf("=> %s", displayPath)
+	}
+	log.Warnf("*****fixed-paths-warnning*****\n%s\n*******************************", strings.Join(strs, "\n"))
+}
+
 // WarnFixedPaths audits the converted payload for surviving rootful jailbreak
-// paths and warns about each one (upstream's "fixed-paths-warning"): Mach-O
-// load commands that ShouldConvert would still rewrite (a conversion miss),
-// and absolute jailbreak paths in non-Mach-O payload files (plists, scripts,
-// configs — the converter does not rewrite those). Paths that are correct to
-// keep rootful (Apple /usr/lib, /var/mobile user data, /System) are excluded
-// by the blacklist. The scan is informational, never fatal.
+// paths and warns about each one in upstream's "fixed-paths-warnning" banner
+// shape (the `strings | grep` scan output of patch.sh): Mach-O load commands
+// that ShouldConvert would still rewrite (a conversion miss), and absolute
+// jailbreak paths in non-Mach-O payload files (plists, scripts, configs —
+// the converter does not rewrite those). Paths that are correct to keep
+// rootful (Apple /usr/lib, /var/mobile user data, /System) are excluded by
+// the blacklist. The scan is informational, never fatal.
 func WarnFixedPaths(payload string) error {
 	warned := 0
 	err := filepath.WalkDir(payload, func(path string, d fs.DirEntry, err error) error {
@@ -618,10 +631,14 @@ func WarnFixedPaths(payload string) error {
 			return nil
 		}
 		rel, _ := filepath.Rel(payload, path)
+		// Display paths package-relative with the /var/jb root, matching
+		// upstream's fpath (`/$(realpath --relative-base=… "$file")`).
+		displayPath := "/var/jb/" + rel
 		is, err := macho.IsMachO(path)
 		if err != nil {
 			return err
 		}
+		var strs []string
 		if is {
 			b := macho.Bin{Path: path}
 			deps, err := b.AllDependencies()
@@ -630,21 +647,23 @@ func WarnFixedPaths(payload string) error {
 			}
 			for _, dep := range deps {
 				if ShouldConvert(dep) {
-					log.Warnf("fixed-paths-warning: %s still depends on %s (should be under /var/jb)", rel, dep)
-					warned++
+					strs = append(strs, dep)
 				}
 			}
-			return nil
-		}
-		text, err := readPayloadText(path)
-		if err != nil {
-			return err
-		}
-		for _, m := range fixedPathRe.FindAllString(text, -1) {
-			if ShouldConvert(m) {
-				log.Warnf("fixed-paths-warning: %s still contains rootful path %s (not rewritten)", rel, m)
-				warned++
+		} else {
+			text, err := readPayloadText(path)
+			if err != nil {
+				return err
 			}
+			for _, m := range fixedPathRe.FindAllString(text, -1) {
+				if ShouldConvert(m) {
+					strs = append(strs, m)
+				}
+			}
+		}
+		if len(strs) > 0 {
+			warned += len(strs)
+			warnFixedPathsBlock(displayPath, is, strs)
 		}
 		return nil
 	})

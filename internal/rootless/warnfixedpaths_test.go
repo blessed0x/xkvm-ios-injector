@@ -55,12 +55,23 @@ func TestRoothideWarnFixedPathsNonMachO(t *testing.T) {
 		t.Fatalf("ConvertToRoothide: %v", err)
 	}
 	got := buf.String()
-	for _, want := range []string{"foo.conf", "asset.bin"} {
-		if !strings.Contains(got, "fixed-paths-warning") || !strings.Contains(got, want) {
-			t.Errorf("expected a fixed-paths warning mentioning %s; output:\n%s", want, got)
+	// Upstream's banner shape: `=> <package-relative path>` (non-Mach-O
+	// only) then the "fixed-paths-warnning" block with each surviving string
+	// on its own line (patch.sh lines 341-347, spelling included). The paths
+	// are package-root-relative: the roothide hoist moved the payload up, so
+	// usr/lib/foo.conf (not var/jb/usr/lib/foo.conf).
+	if !strings.Contains(got, "=> /usr/lib/foo.conf") || !strings.Contains(got, "=> /usr/lib/asset.bin") {
+		t.Fatalf("expected the upstream `=> path` lines for both files; output:\n%s", got)
+	}
+	if n := strings.Count(got, "*****fixed-paths-warnning*****"); n != 2 {
+		t.Errorf("expected 2 fixed-paths banners (one per file); got %d. output:\n%s", n, got)
+	}
+	for _, want := range []string{"/var/jb/usr/bin/tool", "/var/jb/usr/bin/binary-tool"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("expected the surviving string %q in a banner; output:\n%s", want, got)
 		}
 	}
-	for _, mustNot := range []string{"Localizable.strings", "icon.png"} {
+	for _, mustNot := range []string{"Localizable.strings", "icon.png", "/var/jb/usr/bin/strings-tool", "/var/jb/usr/bin/png-tool"} {
 		if strings.Contains(got, mustNot) {
 			t.Errorf("fixed-paths warning must not mention %s (upstream find-loop exclusion); output:\n%s", mustNot, got)
 		}
@@ -112,10 +123,13 @@ func TestRoothideWarnFixedPathsMachOAudit(t *testing.T) {
 	// Exactly ONE warning: the surviving /var/jb dep. The rewritten
 	// .jbroot dep (and the informational rewrite log line mentioning it)
 	// must not appear in a warning — count the warning lines, not the log.
-	if n := strings.Count(got, "fixed-paths-warning"); n != 1 || !strings.Contains(got, "still depends on /var/jb") {
-		t.Fatalf("expected exactly 1 fixed-paths-warning for the surviving /var/jb dep; got %d. output:\n%s", n, got)
+	// Exactly ONE banner: the surviving /var/jb dep (Mach-O files get no `=>`
+	// line, matching upstream's elif). The rewritten .jbroot dep must not be
+	// flagged — a second flagged string would be a second banner.
+	if n := strings.Count(got, "*****fixed-paths-warnning*****"); n != 1 || !strings.Contains(got, "\n/var/jb\n") {
+		t.Fatalf("expected exactly 1 fixed-paths banner for the surviving /var/jb dep; got %d. output:\n%s", n, got)
 	}
-	if strings.Contains(got, "CydiaSubstrate.framework/CydiaSubstrate (load-command rewrite missed)") {
+	if strings.Contains(got, "\n/var/jb/Library/Frameworks") {
 		t.Errorf("audit flagged the rewritten .jbroot dep — it must only flag real survivors; output:\n%s", got)
 	}
 }

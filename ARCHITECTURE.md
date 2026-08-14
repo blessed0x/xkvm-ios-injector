@@ -476,7 +476,11 @@ payload for surviving rootful paths and warns about each: Mach-O load
 commands `ShouldConvert` would still rewrite (a conversion miss) and
 absolute jailbreak paths in non-Mach-O payload files. Scripts are converted
 by the step above; plists are the remaining not-yet-rewritten layer (warned
-only). The scan is informational, never fatal.
+only). Warnings are emitted in upstream's banner shape (patch.sh lines
+341-347): a `=> <path>` line (non-Mach-O files only) then a
+`*****fixed-paths-warnning*****` block with each surviving path on its own
+line — upstream's spelling included. The scan is informational, never
+fatal.
 
 **`xkvm roothide`** ports RootHidePatcher's `patch.sh` main path
 (`internal/rootless/roothide.go`) for the inverse direction — a
@@ -545,7 +549,11 @@ the same walked set upstream's `strings | grep /var/jb` covers: Mach-O
 `__cstring` strings (string tables are not rewritten by the roothide pass),
 plus a load-command audit for missed `/var/jb` dep/rpath rewrites, plus
 printable strings in other payload files with `.png`/`.strings` excluded
-(exactly upstream's find-loop exclusion). Informational, never fatal.
+(exactly upstream's find-loop exclusion). Output matches upstream's banner
+shape: `=> <path>` for non-Mach-O files, then a
+`*****fixed-paths-warnning*****` block with each surviving string on its
+own line (patch.sh lines 341-347, spelling included). Informational, never
+fatal.
 6. **`.DS_Store` cleanup** — every Finder droppings file is deleted before
 the repack (upstream `find ... -name ".DS_Store" -delete`, which also
 covers the pkgmirror snapshot), so macOS-built debs don't ship them. The
