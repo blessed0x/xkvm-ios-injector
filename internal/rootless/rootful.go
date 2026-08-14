@@ -26,7 +26,7 @@
 // /usr/bin and /bin (and /usr/lib / /usr/share) into a single short form, so
 // the reverse picks the more common rootful path (/usr/bin, /usr/lib, ...).
 // A @rpath/<basename> dependency with no matching file in the package (a
-// system framework the forward converter renamed) is left as-is and warned —
+// /System dylib the forward converter renamed) is left as-is and warned —
 // the original /System path cannot be recovered.
 package rootless
 

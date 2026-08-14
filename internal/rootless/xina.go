@@ -298,11 +298,32 @@ func applySeds(data []byte, seds []struct{ from, to string }) []byte {
 	return out
 }
 
+// systemDylibForRpath mirrors the reference's lib_cache grep
+// (`grep -e /System | grep /Library/'[^/]'\*.dylib`): a /System dependency
+// that is a DIRECT child of a /Library/ directory, ending in .dylib.
+// Framework deps (Foundation.framework/Foundation, ...) never match — the
+// reference leaves them rootful, and so does the port: they resolve from the
+// real /System on-device, while an @rpath/<basename> form would dangle
+// (nothing ships the framework under the added /var/jb rpaths).
+func systemDylibForRpath(dep string) bool {
+	if !strings.HasPrefix(dep, "/System/") {
+		return false
+	}
+	i := strings.LastIndex(dep, "/Library/")
+	if i < 0 {
+		return false
+	}
+	tail := dep[i+len("/Library/"):]
+	base := strings.TrimSuffix(tail, ".dylib")
+	return base != tail && !strings.Contains(base, "/")
+}
+
 // patchMachOForXina ports the reference's Mach-O block: install name →
 // @rpath/<basename>; CydiaSubstrate dep → @rpath/libsubstrate.dylib;
-// /System/Library dylib deps → @rpath/<basename>; the two Xina rpaths; then
-// the byte-level seds with revert exceptions; re-signed ad-hoc (the
-// reference's `ldid -S` — entitlements preserved).
+// /System/Library dylib deps (the narrow lib_cache grep) →
+// @rpath/<basename>; the two Xina rpaths; then the byte-level seds with
+// revert exceptions; re-signed ad-hoc (the reference's `ldid -S` —
+// entitlements preserved).
 func patchMachOForXina(path, rel string) error {
 	b := macho.Bin{Path: path}
 	var origEnts []byte
@@ -330,7 +351,7 @@ func patchMachOForXina(path, rel string) error {
 		switch {
 		case strings.Contains(dep, "CydiaSubstrate.framework"):
 			converted = "@rpath/libsubstrate.dylib"
-		case strings.HasPrefix(dep, "/System/") && strings.Contains(dep, "/Library/"):
+		case systemDylibForRpath(dep):
 			converted = "@rpath/" + filepath.Base(dep)
 		default:
 			continue

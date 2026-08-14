@@ -403,6 +403,7 @@ func (u *UI) help() {
 		"  xkvm -i App.ipa -f MyTweak.dylib -o App-Tweaked.ipa   # inject",
 		"  xkvm extract -i App.ipa -o tweaks/                   # extract",
 		"  xkvm rootless -i tweak.deb -o tweak-rootless.deb     # convert to rootless",
+		"  xkvm rootless --xina -i tweak.deb -o tweak-xina.deb  # convert to rootless, Xina style",
 		"  xkvm rootful -i tweak-rootless.deb -o tweak.deb      # convert back to rootful",
 		"  xkvm debify -i MyTweak.dylib -o MyTweak.deb          # build a .deb",
 		"  xkvm check -i App-Tweaked.ipa                        # check for trouble",

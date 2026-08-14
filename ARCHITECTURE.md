@@ -524,9 +524,13 @@ iphoneos-arm64` and `Name` gains ` (Xinafied-rootless)`. The Xina script
 never touches `Depends` — no runtime alternation is added.
 2. **Mach-O** — the install name becomes `@rpath/<basename>`, the
 `CydiaSubstrate.framework` dependency becomes `@rpath/libsubstrate.dylib`
-(the ellekit substrate shim), every `/System/.../Library/...` dependency
-becomes `@rpath/<basename>` (the reference's install_name_tool loop), and
-the `/var/jb/Library/Frameworks` + `/var/jb/usr/lib` rpaths are added.
+(the ellekit substrate shim), `/System` dependencies that are direct
+`.dylib` children of a `/Library/` directory become `@rpath/<basename>`
+(the reference's narrow lib_cache grep, `/Library/'[^/]'\*.dylib` — system
+FRAMEWORKS never match and stay rootful, resolving from the real `/System`
+on-device; an `@rpath/<basename>` form would dangle under the added
+rpaths), and the `/var/jb/Library/Frameworks` + `/var/jb/usr/lib` rpaths
+are added.
 3. **Byte-level seds** — the reference's `sed -i 's#\x00/...#\x00/...#'`
 sequence is ported with the NUL anchor baked in: each pattern fires on any
 NUL-preceded path string — string tables AND load commands whose preceding
@@ -540,6 +544,50 @@ reference's `ldid -S`).
 4. **Plists + scripts** — the reference's `>`-anchored plist seds and
 space-anchored DEBIAN-script seds, order-sensitive (specifics before the
 `/usr` and `/Library` catch-alls).
+
+### The Xina symlink table (`Bootstrapper.swift`)
+
+The short forms the byte-seds emit are only meaningful because the Xina
+jailbreak creates the corresponding symlinks at boot. The authoritative set
+is the `symlinks` array in
+`Packages/Fugu15KernelExploit/Sources/Fugu15KernelExploit/Bootstrapper.swift`
+(`CyPwn/Xinam1ne`, commit `da83aae`; the array is lines 332-350, the
+creation loop lines 352-355; each pair is created via
+`createSymbolicLink(atPath: $0.1, withDestinationPath: $0.0)`, i.e. a link
+AT the short form pointing INTO `/var/jb`):
+
+| Short form (link at) | Target (into `/var/jb`) |
+|---|---|
+| `/var/lib` | `/var/jb/usr/lib` |
+| `/var/lib/dpkg` | `/var/jb/Library/dpkg` |
+| `/var/Lib` | `/var/jb/usr/lib` |
+| `/var/libexec` | `/var/jb/usr/libexec` |
+| `/var/bin` | `/var/jb/usr/bin` |
+| `/var/sy` | `/var/jb/System` |
+| `/var/LIY` | `/var/jb/Library` |
+| `/var/sbin` | `/var/jb/usr/sbin` |
+| `/var/cache` | `/var/jb/usr/cache` |
+| `/var/share` | `/var/jb/usr/share` |
+| `/var/dpkg` | `/var/jb/etc/dpkg` |
+| `/var/alternatives` | `/var/jb/etc/alternatives` |
+| `/var/jb/Xapps` | `/var/jb/Applications` |
+| `/var/jb/UsrLb` | `/var/jb/User/Library` |
+| `/var/jb/vmo` | `/var/jb/var/mobile` |
+| `/var/bash` | `/var/jb/bin/bash` |
+| `/var/local` | `/var/jb/usr/local` |
+
+Every byte-sed target is covered by one of these rows, with one known
+upstream inconsistency, pinned by `TestXinaSymlinkTableConsistency`
+(`internal/rootless/xina_test.go`): the script's `/bin/sh` sed emits
+`/var/sh`, but the bootstrapper's pairs only create `/var/bash` — `/var/sh`
+appears solely in the `xinaLeftoverSymlinks` wipe list (Bootstrapper.swift
+line 166), which is removed at boot unless `/var/.keep_symlinks` exists
+(Bootstrapper.swift line 189).
+The port preserves the script byte-for-byte (a `/var/sh` string in a
+converted binary relies on whatever sh the jailbreak actually exposes); the
+test tolerates it with that note rather than asserting it away. The
+revert-exception seds are likewise checked: every one restores an Apple
+`/usr/lib/...` path that must NOT be a symlink target.
 
 **`xkvm rootful`** (`internal/rootless/rootful.go`) is the inverse — a
 rootless deb (standard OR Xina-style) becomes rootful again, so converted

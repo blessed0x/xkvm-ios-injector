@@ -11,6 +11,7 @@ package rootless
 // warning. Both directions are pure Go, so these run on every CI leg.
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -136,19 +137,21 @@ func TestConvertToXinaGoldenShadow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := strings.Join(deps, "\n")
-	// The NUL-anchored byte-seds fire on any string whose preceding byte is
+	got := strings.Join(deps, "\n") // The NUL-anchored byte-seds fire on any string whose preceding byte is
 	// a NUL — string tables AND load commands whose preceding field (e.g.
 	// compat_version) is zero — exactly like the reference's `sed -i` on the
 	// whole binary. So Cephei and librocketbootstrap (compat_version 0) are
 	// converted to the short forms; the Apple libs are restored by the
-	// revert-exception seds.
+	// revert-exception seds. /System FRAMEWORK deps never match the
+	// reference's narrow lib_cache grep (.dylib-only direct /Library/
+	// children), so Foundation stays rootful and resolves from the real
+	// /System on-device.
 	for _, want := range []string{
-		"@rpath/libsubstrate.dylib",                   // substrate shim (install_name_tool -change)
-		"@rpath/Foundation",                           // /System dep renamed by the reference's install_name_tool loop
-		"/var/LIY/Frameworks/Cephei.framework/Cephei", // byte-sed hit the load command (preceding field zero)
-		"/var/lib/librocketbootstrap.dylib",           // byte-sed hit the load command
-		"/usr/lib/libobjc.A.dylib",                    // Apple lib restored by the revert-exception seds
+		"@rpath/libsubstrate.dylib",                                  // substrate shim (install_name_tool -change)
+		"/var/LIY/Frameworks/Cephei.framework/Cephei",                // byte-sed hit the load command (preceding field zero)
+		"/var/lib/librocketbootstrap.dylib",                          // byte-sed hit the load command
+		"/usr/lib/libobjc.A.dylib",                                   // Apple lib restored by the revert-exception seds
+		"/System/Library/Frameworks/Foundation.framework/Foundation", // never matched by the .dylib grep
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("deps missing %q; got:\n%s", want, got)
@@ -156,13 +159,15 @@ func TestConvertToXinaGoldenShadow(t *testing.T) {
 	}
 	for _, mustNot := range []string{
 		"/Library/Frameworks/CydiaSubstrate.framework/CydiaSubstrate",
-		"/System/Library/Frameworks/Foundation.framework/Foundation",
 		"/Library/Frameworks/Cephei.framework/Cephei",
 		"/usr/lib/librocketbootstrap.dylib",
 	} {
 		if strings.Contains(got, mustNot) {
 			t.Errorf("dep %q must be rewritten; got:\n%s", mustNot, got)
 		}
+	}
+	if strings.Contains(got, "@rpath/Foundation") {
+		t.Errorf("system framework dep must stay rootful (the reference's grep never matches it); got:\n%s", got)
 	}
 	rpaths, err := b.Rpaths()
 	if err != nil {
@@ -270,10 +275,14 @@ func TestRootfulRoundTripXina(t *testing.T) {
 	if strings.Contains(got, "@rpath/libsubstrate.dylib") {
 		t.Errorf("@rpath/libsubstrate.dylib still present; got:\n%s", got)
 	}
-	// System-framework @rpath deps are unrecoverable (their file isn't in
-	// the package) — they stay @rpath, the documented lossy case.
-	if !strings.Contains(got, "@rpath/Foundation") {
-		t.Errorf("unrecoverable @rpath dep missing (should be left as-is); got:\n%s", got)
+	// /System framework deps were never converted in the forward (the
+	// reference's grep matches .dylib only), so they round-trip untouched:
+	// the round trip is clean, with no @rpath residue at all.
+	if !strings.Contains(got, "/System/Library/Frameworks/Foundation.framework/Foundation") {
+		t.Errorf("system framework dep missing after round trip; got:\n%s", got)
+	}
+	if strings.Contains(got, "@rpath/") {
+		t.Errorf("unrecoverable @rpath dep left behind (should have stayed rootful); got:\n%s", got)
 	}
 	rpaths, err := b.Rpaths()
 	if err != nil {
@@ -485,6 +494,55 @@ func TestRootfulRoundTripTweakInject(t *testing.T) {
 	}
 	if strings.Contains(ctl, RuntimeDep) {
 		t.Errorf("control still carries the rootless runtime dependency; got:\n%s", ctl)
+	}
+}
+
+// TestRootfulDependency pins the per-dependency inverse mapping, including
+// the lossy case: an @rpath/<basename> dep whose file is NOT in the package
+// (a /System dylib the forward renamed) is left as-is with a warning and
+// ok=false. The round-trip golden tests cover the Shadow fixture, which has
+// no such dep after the /System-framework fix; this table pins the path
+// directly.
+func TestRootfulDependency(t *testing.T) {
+	// Capture the logger so the lossy path's warning can be asserted (the
+	// test is NOT silent — it needs the Warnf output).
+	var logBuf bytes.Buffer
+	log.SetWriters(&logBuf, &logBuf)
+	t.Cleanup(func() { log.SetWriters(os.Stdout, os.Stderr) })
+	// A resolver that knows about Shadow.dylib but nothing else.
+	resolver := func(base string) string {
+		if base == "Shadow.dylib" {
+			return "/Library/MobileSubstrate/DynamicLibraries/Shadow.dylib"
+		}
+		return ""
+	}
+	cases := []struct {
+		in       string
+		want     string
+		wantOK   bool
+		wantWarn bool // expects a "couldn't recover" warning (left as-is)
+	}{
+		{"/var/jb/usr/lib/librocketbootstrap.dylib", "/usr/lib/librocketbootstrap.dylib", true, false},
+		{"/var/jb/Library/Frameworks/Cephei.framework/Cephei", "/Library/Frameworks/Cephei.framework/Cephei", true, false},
+		{"@rpath/libsubstrate.dylib", "/Library/Frameworks/CydiaSubstrate.framework/CydiaSubstrate", true, false},
+		{"@rpath/Shadow.dylib", "/Library/MobileSubstrate/DynamicLibraries/Shadow.dylib", true, false}, // resolved in package
+		{"@rpath/Foundation", "", false, true},                                           // lossy: system dylib not in package
+		{"/System/Library/Frameworks/Foundation.framework/Foundation", "", false, false}, // untouched
+		{"/usr/lib/libobjc.A.dylib", "", false, false},                                   // Apple lib untouched
+		{"@executable_path/X.dylib", "", false, false},                                   // never a conversion target
+	}
+	for _, c := range cases {
+		logBuf.Reset()
+		got, ok := rootfulDependency(c.in, resolver)
+		if got != c.want || ok != c.wantOK {
+			t.Errorf("rootfulDependency(%q) = (%q, %v), want (%q, %v)", c.in, got, ok, c.want, c.wantOK)
+		}
+		if c.wantWarn && !strings.Contains(logBuf.String(), "couldn't recover") {
+			t.Errorf("rootfulDependency(%q): expected the unrecoverable-rpath warning, got logs: %q", c.in, logBuf.String())
+		}
+		if !c.wantWarn && strings.Contains(logBuf.String(), "couldn't recover") {
+			t.Errorf("rootfulDependency(%q): unexpected warning for a recoverable path: %q", c.in, logBuf.String())
+		}
 	}
 }
 
