@@ -472,11 +472,17 @@ root while the system copy stays under `rootfs/var/` (pinned by
 `TestHoistVarCollision`). A `var/` with no jb at all is system content and
 also lands under `rootfs/var/`; an empty `var/` is dropped (upstream
 `rmdir ... || true`).
-2. **Control** — `Architecture → iphoneos-arm64e`; the `Conflicts`
-"roothide" mangle; and the mode-dependent edits: default adds none,
-`--mode auto` adds `rootless-compat(>= 0.9)`, `--mode dynamic` adds a
-`~roothide` version suffix plus a `patches-<pkg>(= <ver>~roothide)`
-Pre-Depends.
+2. **Control** — the input must be `iphoneos-arm64`: upstream refuses any
+other arch (`[ $DEB_ARCH != "iphoneos-arm64" ]` → exit 1), so a rootful
+or already-roothide deb errors with a pointer to `xkvm rootless` instead
+of silently producing a broken hoist. Then `Architecture → iphoneos-arm64e`;
+the `Conflicts` "roothide" mangle; and the mode-dependent edits: default
+adds none, `--mode auto` adds `rootless-compat(>= 0.9)`, `--mode dynamic`
+adds a `~roothide` version suffix plus a `patches-<pkg>(= <ver>~roothide)`
+Pre-Depends. The parse/render round-trip strips blank lines (upstream
+`sed -i '/^$/d'`); only the Architecture *field* is rewritten — upstream's
+whole-file `s|iphoneos-arm|iphoneos-arm64e|g` would corrupt a Description
+that mentions the arch (documented deviation).
 3. **Mach-O** — every `/var/jb/...` load-command dependency and LC_RPATH is
 rewritten to `@loader_path/.jbroot/...` (the roothide bootstrap lives inside
 each app's container at `.jbroot`, so the jailbreak is invisible to the
@@ -505,6 +511,12 @@ the same walked set upstream's `strings | grep /var/jb` covers: Mach-O
 plus a load-command audit for missed `/var/jb` dep/rpath rewrites, plus
 printable strings in other payload files with `.png`/`.strings` excluded
 (exactly upstream's find-loop exclusion). Informational, never fatal.
+6. **`.DS_Store` cleanup** — every Finder droppings file is deleted before
+the repack (upstream `find ... -name ".DS_Store" -delete`, which also
+covers the pkgmirror snapshot), so macOS-built debs don't ship them. The
+output deb is gzip-compressed (upstream `-Zzstd`) — documented deviation:
+gzip is universally dpkg-compatible — and owned by the running user
+(upstream `chown 501:501`, a macOS-locale detail).
 
 `--pkgmirror` mirrors the (post-hoist) package to
 `var/mobile/Library/pkgmirror` with the control dir renamed

@@ -11,6 +11,44 @@ import (
 	"github.com/xkvm/xkvm/internal/testutil"
 )
 
+// TestRoothideHoistNoVar pins the no-var/ hoist case: an iphoneos-arm64
+// deb whose payload is NOT under var/jb (a "claims rootless but isn't"
+// package) must hoist cleanly — every top-level entry joins rootfs/. Pure
+// Go (no Mach-O), so it runs on every CI leg. Before the fix, the no-var
+// else-branch treated Remove(var)'s IsNotExist as "var exists but is
+// non-empty" and put a phantom "var" in the loose set, failing the later
+// rename with ENOENT.
+func TestRoothideHoistNoVar(t *testing.T) {
+	tmp := t.TempDir()
+	staging := filepath.Join(tmp, "staging")
+	os.MkdirAll(filepath.Join(staging, "DEBIAN"), 0o755)
+	control := "Package: novartweak\nVersion: 1.0\nArchitecture: iphoneos-arm64\nDepends: mobilesubstrate\nDescription: no var test\nMaintainer: xkvm\n"
+	if err := os.WriteFile(filepath.Join(staging, "DEBIAN", "control"), []byte(control), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Payload at the package root, NOT under var/jb — and no var/ at all.
+	os.MkdirAll(filepath.Join(staging, "Library", "MobileSubstrate", "DynamicLibraries"), 0o755)
+	if err := os.WriteFile(filepath.Join(staging, "Library", "MobileSubstrate", "DynamicLibraries", "NovaTweak.dylib"), []byte("not a real dylib, just a file"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	in := filepath.Join(tmp, "novar.deb")
+	if err := deb.Build(staging, in); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	out := filepath.Join(tmp, "roothide.deb")
+	if err := ConvertToRoothide(in, out, false, ""); err != nil {
+		t.Fatalf("ConvertToRoothide: %v", err)
+	}
+	unpacked := filepath.Join(tmp, "unpacked")
+	if err := deb.Unpack(out, unpacked); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(unpacked, "rootfs", "Library", "MobileSubstrate", "DynamicLibraries", "NovaTweak.dylib")); err != nil {
+		t.Fatalf("payload missing under rootfs/: %v", err)
+	}
+}
+
 // TestHoistVarCollision pins the hoist's var/ handling against upstream's
 // documented case: "some packages have both /var/jb/var/xxx and /var/xxx,
 // same file same name". The jbroot copy must win at the package root while

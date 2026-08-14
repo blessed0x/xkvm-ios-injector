@@ -100,6 +100,13 @@ jobs:
       - name: Fixed-paths warning scope (verbose)
         if: matrix.os == 'macos-14'
         run: go test -race -v ./internal/rootless/ -run 'TestRoothideWarnFixedPathsNonMachO|TestRoothideWarnFixedPathsMachOAudit'
+      # Control handling sweep (all pure Go — run on both legs in the
+      # suite-wide step; verbose re-run on macos-14 for the log). Pins the
+      # .DS_Store cleanup, the blank-line-stripping control round-trip, the
+      # iphoneos-arm64 input gate, and the no-var/ hoist case.
+      - name: Control handling sweep (verbose)
+        if: matrix.os == 'macos-14'
+        run: go test -race -v ./internal/rootless/ -run 'TestRoothideDSStoreCleanup|TestRoothideControlBlankLines|TestRoothideArchGate|TestRoothideHoistNoVar'
       # Generality smoke (macos-14 only, needs go + Xcode for Mach-O
       # fixtures): build ten hermetic fixture IPAs with fully generic names
       # and assert xkvm check's exit code on each — the same sweep that ran

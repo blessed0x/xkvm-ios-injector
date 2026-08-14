@@ -6,8 +6,13 @@ package rootless
 //
 //  1. hoist — var/jb/* is moved to the package root; anything else in the
 //     payload goes under rootfs/
-//  2. control — Architecture → iphoneos-arm64e, Conflicts mangles
-//     "roothide", and Pre-Depends/version-suffix edits per mode
+//  2. control — the input must be iphoneos-arm64 (upstream refuses
+//     anything else, exit 1); Architecture → iphoneos-arm64e, Conflicts
+//     mangles "roothide", and Pre-Depends/version-suffix edits per mode.
+//     The parse/render round-trip strips blank lines (upstream's `sed -i
+//     '/^$/d'`); unlike upstream's whole-file `s|iphoneos-arm|...|` sed,
+//     only the Architecture field is rewritten (a whole-file sed would
+//     corrupt Description text mentioning the arch)
 //  3. Mach-O — every /var/jb/... load-command dependency and LC_RPATH is
 //     rewritten to @loader_path/.jbroot/... (the roothide bootstrap lives
 //     inside each app's container at .jbroot, so the jailbreak is invisible
@@ -28,6 +33,10 @@ package rootless
 //     the same walk upstream scans: Mach-O __cstring strings, a load-command
 //     audit for missed rewrites, and printable strings in other payload
 //     files (.png/.strings excluded, matching upstream's find loop)
+//  6. .DS_Store cleanup — every Finder droppings file is deleted before the
+//     repack (upstream `find ... -name ".DS_Store" -delete`); output is
+//     gzip-compressed (upstream -Zzstd — documented deviation: gzip is
+//     universally dpkg-compatible)
 //
 // --pkgmirror mirrors the package to var/mobile/Library/pkgmirror with the
 // control dir renamed DEBIAN.<pkg> for roothide's package manager (plus any
@@ -77,6 +86,13 @@ func ConvertToRoothide(input, output string, pkgmirror bool, mode string) error 
 	if err := deb.Unpack(input, tmpdir); err != nil {
 		return err
 	}
+	// Input gate before any surgery: upstream refuses anything that isn't
+	// a rootless package (`[ $DEB_ARCH != "iphoneos-arm64" ]` → exit 1,
+	// which also runs BEFORE the hoist). A rootful or already-roothide deb
+	// must fail with a clear message, not a confusing hoist error.
+	if err := checkRootlessArch(tmpdir); err != nil {
+		return err
+	}
 
 	if err := hoistRootless(tmpdir); err != nil {
 		return err
@@ -101,6 +117,9 @@ func ConvertToRoothide(input, output string, pkgmirror bool, mode string) error 
 		return err
 	}
 	if err := warnRoothideFixedPaths(tmpdir); err != nil {
+		return err
+	}
+	if err := removeDSStore(tmpdir); err != nil {
 		return err
 	}
 
@@ -199,8 +218,11 @@ func hoistRootless(dir string) error {
 		return err
 	} else {
 		// No var/jb: an empty var/ is dropped; a var/ with system content
-		// joins the rootfs move (upstream rmdir fails -> rootfs).
-		if err := os.Remove(filepath.Join(dir, "var")); err != nil {
+		// joins the rootfs move (upstream rmdir fails -> rootfs). A package
+		// with no var/ at all leaves nothing to move — Remove fails with
+		// IsNotExist, which must NOT put a phantom "var" in the loose set
+		// (the later rename would ENOENT).
+		if err := os.Remove(filepath.Join(dir, "var")); err != nil && !os.IsNotExist(err) {
 			loose = append(loose, "var")
 		}
 	}
@@ -223,7 +245,14 @@ func hoistRootless(dir string) error {
 
 // editControlRoothide applies the roothide control edits: Architecture →
 // iphoneos-arm64e, the Conflicts "roothide" mangle, and the mode-dependent
-// Pre-Depends/version edits.
+// Pre-Depends/version edits. The parse/render round-trip also strips blank
+// lines, matching upstream's `sed -i '/^$/d'` before the arch rewrite
+// (patch.sh line 174).
+//
+// Input gate: upstream refuses anything that isn't a rootless package
+// (`[ $DEB_ARCH != "iphoneos-arm64" ]` → exit 1); a rootful or already-
+// roothide deb produces a broken hoist, so the same guard errors here with
+// a clear message instead of silently converting garbage.
 func editControlRoothide(dir, mode string) error {
 	path := filepath.Join(dir, "DEBIAN", "control")
 	data, err := os.ReadFile(path)
@@ -291,6 +320,29 @@ func editControlRoothide(dir, mode string) error {
 		log.Infof("control edited (%d field(s))", edits)
 	}
 	return nil
+}
+
+// checkRootlessArch validates the input package's Architecture field is
+// iphoneos-arm64, matching upstream's refusal of anything else (`[
+// $DEB_ARCH != "iphoneos-arm64" ]` → exit 1). No Architecture field also
+// refuses (upstream's DEB_ARCH is empty → the same guard fires).
+func checkRootlessArch(dir string) error {
+	data, err := os.ReadFile(filepath.Join(dir, "DEBIAN", "control"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("not a rootless package: no DEBIAN/control to inspect")
+		}
+		return err
+	}
+	for _, e := range parseControl(string(data)) {
+		if e.key == "Architecture" {
+			if e.value != "iphoneos-arm64" {
+				return fmt.Errorf("not a rootless package (Architecture: %s) — xkvm roothide converts iphoneos-arm64 debs; run `xkvm rootless` first for rootful inputs", e.value)
+			}
+			return nil
+		}
+	}
+	return fmt.Errorf("not a rootless package: control has no Architecture field")
 }
 
 func joinPreDepends(existing, add string) string {
@@ -682,6 +734,35 @@ func warnRoothideFixedPaths(dir string) error {
 // `strings - "$file" | grep /var/jb` matches on non-Mach-O payload files.
 // Any run containing /var/jb is at least 8 bytes, so the min length never
 // hides it.
+// removeDSStore deletes every .DS_Store in the package before the repack,
+// mirroring upstream's `find "$TEMPDIR_NEW" -name ".DS_Store" -delete`
+// (patch.sh line 178) — macOS-built debs frequently ship Finder droppings
+// that must not reach the output package (including inside the pkgmirror
+// snapshot, which upstream's find also covers).
+func removeDSStore(dir string) error {
+	var found []string
+	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.Name() == ".DS_Store" {
+			found = append(found, path)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	for _, p := range found {
+		if err := os.Remove(p); err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(dir, p)
+		log.Infof("removed .DS_Store at %s", filepath.ToSlash(rel))
+	}
+	return nil
+}
+
 func printableRuns(data []byte) []string {
 	var runs []string
 	start := -1

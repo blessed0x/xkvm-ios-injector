@@ -758,7 +758,10 @@ func nativeIsMachO(path string) (bool, error) {
 	defer f.Close()
 	var magic [4]byte
 	if _, err := io.ReadFull(f, magic[:]); err != nil {
-		if err == io.EOF {
+		// io.ErrUnexpectedEOF: the file is non-empty but shorter than the
+		// 4-byte magic — it cannot be a Mach-O (an empty file is io.EOF).
+		// Both must report "not a Mach-O", never abort the walk.
+		if err == io.EOF || err == io.ErrUnexpectedEOF {
 			return false, nil
 		}
 		return false, err

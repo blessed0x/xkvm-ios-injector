@@ -138,6 +138,7 @@ Practical guidance:
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
+| conversion refuses: "not a rootless package (Architecture: …)" | you fed a rootful (`iphoneos-arm`) or already-roothide deb — upstream exits 1 on the same input | convert rootful debs with `xkvm rootless` first, then feed the rootless output back in |
 | Sileo refuses to install: unresolved `patches-<pkg>` | dynamic mode adds the Pre-Depends; the patches repo isn't added | Add the roothide patches repo, or rebuild with `--mode auto` (rootless-compat dep) or default (no dep) |
 | tweak loads but is never auto-patched | you built with `--mode dynamic` or default, which ship no `.roothidepatch` symlinks | rebuild with `--mode auto` (adds the symlinks + `rootless-compat` dep) if you want the AutoPatches treatment |
 | `dpkg -i` succeeds but the tweak never loads | app not finding the dylib at `@loader_path/.jbroot`, or the app is sandboxed away from the jbroot | verify `otool -L` paths; confirm the app was fully relaunched (not just backgrounded) |
