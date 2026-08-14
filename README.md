@@ -157,10 +157,12 @@ xkvm extract -i Patched.ipa -o extracted-tweaks/
 **Convert a tweak package for a different jailbreak:**
 
 ```bash
-xkvm rootless -i classic.deb -o modern.deb     # rootful → rootless
-xkvm roothide  -i modern.deb -o jbroot.deb     # rootless → roothide
-xkvm undeb     -i tweak.deb  -o artifacts/     # unpack a .deb
-xkvm debify    -i MyTweak.dylib -o MyTweak.deb # .dylib → .deb
+xkvm rootless -i classic.deb -o modern.deb        # rootful → rootless
+xkvm rootless -i classic.deb -o xina.deb --xina   # rootful → rootless, Xina style
+xkvm rootful  -i modern.deb  -o classic.deb       # rootless → rootful (either style)
+xkvm roothide -i modern.deb  -o jbroot.deb        # rootless → roothide
+xkvm undeb    -i tweak.deb   -o artifacts/        # unpack a .deb
+xkvm debify   -i MyTweak.dylib -o MyTweak.deb     # .dylib → .deb
 ```
 
 **Fetch a tweak from a Cydia repo:**
@@ -175,7 +177,8 @@ xkvm -i App.ipa -o Patched.ipa --fetch com.example.tweak
 |---|---|
 | `xkvm -i <app> ...` | Inject tweaks, modify the app, and re-sign it |
 | `extract` | Pull tweaks (dylibs, frameworks, bundles, app extensions) out of an app |
-| `rootless` | Convert a rootful package to the modern rootless layout |
+| `rootless` | Convert a rootful package to the modern rootless layout (`--xina` for the Xina short-path style) |
+| `rootful` | Convert a rootless package back to the classic rootful layout |
 | `roothide` | Convert a rootless package to a roothide-jailbreak package |
 | `debify` | Build a MobileSubstrate `.deb` from a dylib or payload directory |
 | `undeb` | Unpack a `.deb` into its tweak artifacts |

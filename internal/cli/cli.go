@@ -151,6 +151,7 @@ to the -i input; the result is written to -o, or overwrites the input.`,
 	cmd.AddCommand(newDebifyCmd())
 	cmd.AddCommand(newUndebCmd())
 	cmd.AddCommand(newRootlessCmd())
+	cmd.AddCommand(newRootfulCmd())
 	cmd.AddCommand(newRoothideCmd())
 	return cmd
 }
@@ -387,10 +388,11 @@ Dylib-to-Deb-Converter / Forte workflow.`,
 // under var/jb, control edits (iphoneos-arm64 + the rootless runtime
 // dependency), Mach-O load-command + __cstring paths rewritten under /var/jb,
 // and script path tokens converted (rootless-patcher port — see
-// ARCHITECTURE.md).
+// ARCHITECTURE.md). --xina selects the Xinam1nePatcher pipeline (short
+// symlink-form byte seds, @rpath conventions) instead.
 func newRootlessCmd() *cobra.Command {
 	var input, output string
-	var thin, tweakinject bool
+	var thin, tweakinject, xina bool
 	cmd := &cobra.Command{
 		Use:   "rootless -i <rootful.deb> -o <rootless.deb> [--thin] [--tweakinject]",
 		Short: "convert a rootful .deb to rootless",
@@ -419,6 +421,9 @@ names become @rpath/<basename>, and the /usr/lib + /var/jb/usr/lib rpaths
 are added.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if xina {
+				return app.RootlessXina(input, output)
+			}
 			return app.Rootless(input, output, thin, tweakinject)
 		},
 	}
@@ -427,6 +432,42 @@ are added.`,
 	f.StringVarP(&output, "output", "o", "", "output .deb path")
 	f.BoolVar(&thin, "thin", false, "thin every Mach-O to arm64 (best-effort)")
 	f.BoolVar(&tweakinject, "tweakinject", false, "emit the modern TweakInject layout + @rpath/libsubstrate.dylib shim (Derootifier conventions)")
+	f.BoolVar(&xina, "xina", false, "use the Xina-style pipeline (short symlink-form paths, Xinam1nePatcher port)")
+	_ = cmd.MarkFlagRequired("input")
+	_ = cmd.MarkFlagRequired("output")
+	return cmd
+}
+
+// newRootfulCmd converts a rootless .deb back to a rootful one: the var/jb
+// payload is hoisted to the package root, /var/jb load commands and string
+// paths plus the Xina short forms are rewritten to rootful paths, @rpath
+// substrate shims are undone, and the control edits are reversed — the
+// inverse of 'xkvm rootless' (and 'xkvm rootless --xina').
+func newRootfulCmd() *cobra.Command {
+	var input, output string
+	cmd := &cobra.Command{
+		Use:   "rootful -i <rootless.deb> -o <rootful.deb>",
+		Short: "convert a rootless .deb back to rootful",
+		Long: `rootful converts a rootless jailbreak .deb (var/jb payload) back to a
+rootful one (the reverse of 'xkvm rootless'). The var/jb payload is hoisted
+to the package root, the control file goes back to iphoneos-arm without
+the rootless runtime dependency (cy+cpu.arm64v8 | oldabi-xina | oldabi),
+and /var/jb load-command dependencies, install names, and LC_RPATH entries
+are rewritten to rootful paths. @rpath/libsubstrate.dylib shims become
+/Library/Frameworks/CydiaSubstrate.framework/CydiaSubstrate, @rpath/
+install names are resolved to the file's package path when the file ships
+in the package (otherwise left with a warning), and the Xina short forms
+(/var/LIY, /var/lib, /var/bin, /var/sh) in string tables and plists are
+restored. Every patched Mach-O is re-signed with its preserved
+entitlements. Already-rootful packages are skipped.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return app.Rootful(input, output)
+		},
+	}
+	f := cmd.Flags()
+	f.StringVarP(&input, "input", "i", "", "the rootless .deb to convert")
+	f.StringVarP(&output, "output", "o", "", "output .deb path")
 	_ = cmd.MarkFlagRequired("input")
 	_ = cmd.MarkFlagRequired("output")
 	return cmd

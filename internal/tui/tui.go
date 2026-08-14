@@ -97,7 +97,7 @@ func (u *UI) menu() {
 	u.title("pick a tool")
 	fmt.Fprintln(u.Out, u.paint(anCyan, "  1. "+anBold+"inject")+"  —  put a tweak (dylib / deb / .cyan) into an app or .ipa")
 	fmt.Fprintln(u.Out, u.paint(anCyan, "  2. "+anBold+"extract")+" —  pull tweaks OUT of an app so you can reuse them")
-	fmt.Fprintln(u.Out, u.paint(anCyan, "  3. "+anBold+"convert")+" —  change a tweak package format (deb / rootless / roothide)")
+	fmt.Fprintln(u.Out, u.paint(anCyan, "  3. "+anBold+"convert")+" —  change a tweak package format (rootful / rootless / roothide)")
 	fmt.Fprintln(u.Out, u.paint(anCyan, "  4. "+anBold+"build")+"   —  wrap a dylib into a shareable .deb or .cyan file")
 	fmt.Fprintln(u.Out, u.paint(anCyan, "  5. "+anBold+"check")+"   —  make sure an app's tweaks won't crash (missing files?)")
 	fmt.Fprintln(u.Out, u.paint(anCyan, "  6. "+anBold+"help")+"    —  plain-language guide + real command examples")
@@ -291,6 +291,8 @@ func (u *UI) flowConvert() {
 	opts := []string{
 		"rootful .deb  →  rootless .deb  (modern jailbreaks: Dopamine, ellekit)",
 		"rootless .deb →  roothide .deb  (the roothide jailbreak)",
+		"rootful .deb  →  rootless .deb, Xina style  (short symlink paths)",
+		"rootless .deb →  rootful .deb  (back to the classic layout)",
 	}
 	i := u.pickOne("convert a tweak package", opts)
 	if i < 0 {
@@ -312,6 +314,16 @@ func (u *UI) flowConvert() {
 			return app.Roothide(in, out, false, "")
 		})
 		u.showResult(out, err, "roothide .deb ready!")
+	case 2:
+		out, err := u.runSpinning("converting to Xina-style rootless...", func() error {
+			return app.RootlessXina(in, out)
+		})
+		u.showResult(out, err, "Xina-style rootless .deb ready!")
+	case 3:
+		out, err := u.runSpinning("converting back to rootful...", func() error {
+			return app.Rootful(in, out)
+		})
+		u.showResult(out, err, "rootful .deb ready — classic jailbreaks (unc0ver, checkra1n)!")
 	}
 }
 
@@ -382,7 +394,7 @@ func (u *UI) help() {
 		"  ────────────────────────",
 		"  • inject  — add a tweak to an app (the main job)",
 		"  • extract — take tweaks OUT of an app, to reuse them",
-		"  • convert — change a package for a different jailbreak",
+		"  • convert — change a package for a different jailbreak (rootful / rootless / roothide)",
 		"  • build   — package a dylib for sharing",
 		"  • check   — find missing files before you install",
 		"",
@@ -390,7 +402,8 @@ func (u *UI) help() {
 		"  ────────────────────────────────",
 		"  xkvm -i App.ipa -f MyTweak.dylib -o App-Tweaked.ipa   # inject",
 		"  xkvm extract -i App.ipa -o tweaks/                   # extract",
-		"  xkvm rootless -i tweak.deb -o tweak-rootless.deb     # convert",
+		"  xkvm rootless -i tweak.deb -o tweak-rootless.deb     # convert to rootless",
+		"  xkvm rootful -i tweak-rootless.deb -o tweak.deb      # convert back to rootful",
 		"  xkvm debify -i MyTweak.dylib -o MyTweak.deb          # build a .deb",
 		"  xkvm check -i App-Tweaked.ipa                        # check for trouble",
 		"  xkvm --help                                          # every flag, explained",

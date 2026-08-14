@@ -50,6 +50,12 @@ xkvm embeds (via `//go:embed all:extras`) third-party binaries and frameworks un
   `xkvm rootless --tweakinject` mode only (TweakInject layout,
   @rpath/libsubstrate.dylib shim, @rpath install names, rpaths); no code
   copied.
+- **Xinam1ne** (`CyPwn/Xinam1ne`, the Xinam1nePatcher script shipped in the
+  AIO package): GPL-family package (Paisseon). Semantics reference for
+  `xkvm rootless --xina` only (the NUL-anchored short-form byte seds,
+  @rpath install-name/substrate conventions, plist and DEBIAN-script sed
+  sequences); no code copied. `xkvm rootful` is the xkvm-native inverse of
+  this and the rootless-patcher pipeline.
 - **RootHidePatcher** (`roothide/RootHidePatcher`): GPL-3.0. Semantics
   reference for `xkvm roothide` (var/jb hoist + rootfs/ split, .jbroot
   load-command and rpath rewrites, control arm64e edits, script/plist path

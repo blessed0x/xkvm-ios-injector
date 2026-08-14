@@ -423,6 +423,8 @@ ipa/deb layers, porting three upstream tools:
 | `xkvm debify` | `cs59/Dylib-to-Deb-Converter` (GPL-3.0, format reference only) | dylib (or payload dir) → standard MobileSubstrate `.deb` |
 | `xkvm undeb` | `Dr-Sauce/Forte` (no license — a Shortcut that unarchives a deb) | `.deb` → extracted dylibs + resources + placement manifest |
 | `xkvm rootless` | `NightwindDev/rootless-patcher` (MIT — semantics ported) + `haxi0/Derootifier` (GPL-3.0, `--tweakinject` conventions) | rootful `.deb` → rootless `.deb` |
+| `xkvm rootless --xina` | `Xinam1ne` AIO patcher (`CyPwn`, reference script; GPL-family package — see NOTICE) | rootful `.deb` → Xina-style rootless `.deb` (short symlink paths) |
+| `xkvm rootful` | inverse of the two converters above (xkvm-native) | rootless `.deb` → rootful `.deb` |
 | `xkvm roothide` | `roothide/RootHidePatcher` (GPL-3.0 — semantics ported) | rootless `.deb` → roothide-jailbreak `.deb` |
 
 All three are **format/semantics ports — no upstream code is copied** (see
@@ -508,6 +510,65 @@ only). The advisory is emitted byte-identical to upstream's echo -e output
 `*****fixed-paths-warnning*****` block with each surviving path on its own
 line — upstream's spelling included, no log prefix, no extra summary
 line. The scan is informational, never fatal.
+
+**`xkvm rootless --xina`** ports the Xinam1nePatcher script shipped in the
+Xinam1ne AIO package (`internal/rootless/xina.go`), the other rootless
+convention: Xina's jailbreak exposes short bootstrap paths as symlinks
+created at jailbreak time (`/var/LIY → /var/jb/Library`, `/var/lib →
+/var/jb/usr/lib`, `/var/bin → /var/jb/usr/bin`, …), and the patcher
+rewrites rootful paths to those short forms so rootful tweaks resolve
+through the symlinks. The pipeline mirrors the reference script's order:
+
+1. **Repack + control** — same `var/jb` repack; `Architecture →
+iphoneos-arm64` and `Name` gains ` (Xinafied-rootless)`. The Xina script
+never touches `Depends` — no runtime alternation is added.
+2. **Mach-O** — the install name becomes `@rpath/<basename>`, the
+`CydiaSubstrate.framework` dependency becomes `@rpath/libsubstrate.dylib`
+(the ellekit substrate shim), every `/System/.../Library/...` dependency
+becomes `@rpath/<basename>` (the reference's install_name_tool loop), and
+the `/var/jb/Library/Frameworks` + `/var/jb/usr/lib` rpaths are added.
+3. **Byte-level seds** — the reference's `sed -i 's#\x00/...#\x00/...#'`
+sequence is ported with the NUL anchor baked in: each pattern fires on any
+NUL-preceded path string — string tables AND load commands whose preceding
+field (e.g. compat_version) is zero — converting `/Library/...` →
+`/var/LIY/...`, `/usr/lib` → `/var/lib`, `/usr/bin` → `/var/bin`, `/bin/sh`
+→ `/var/sh`, then the revert exceptions restore the Apple system libs
+(`/var/lib/libobjc.A.dylib` → `/usr/lib/...`, libc++, libSystem,
+libstdc++, libMobileGestalt). All mappings are same-length, so the file is
+never resized. Re-signed ad-hoc with preserved entitlements (the
+reference's `ldid -S`).
+4. **Plists + scripts** — the reference's `>`-anchored plist seds and
+space-anchored DEBIAN-script seds, order-sensitive (specifics before the
+`/usr` and `/Library` catch-alls).
+
+**`xkvm rootful`** (`internal/rootless/rootful.go`) is the inverse — a
+rootless deb (standard OR Xina-style) becomes rootful again, so converted
+development round-trips:
+
+1. **Hoist** — `var/jb/*` moves back to the package root (the exact inverse
+of the repack; empty `var/` dropped).
+2. **Control** — `Architecture → iphoneos-arm`, the rootless runtime
+alternation (`cy+cpu.arm64v8 | oldabi-xina | oldabi`) is dropped from
+`Depends` (removing the field when it was the whole value), and the
+` (Xinafied-rootless)` Name suffix is stripped.
+3. **Mach-O** — load-command deps and install names are restored:
+`/var/jb/...` prefixes stripped, `@rpath/libsubstrate.dylib` →
+`/Library/Frameworks/CydiaSubstrate.framework/CydiaSubstrate`, `/var/LIY`
+and `/var/lib` load-command forms → `/Library` and `/usr/lib`, and
+`@rpath/<basename>` install names are resolved to the file's package path
+when the file ships in the package (a basename→path map built from the
+payload). Unrecoverable `@rpath/<basename>` deps (system frameworks the
+forward renamed) are left as-is with a warning. `/var/jb` LC_RPATH entries
+are removed (the removal is collect-then-delete: deleting adjacent rpaths
+while iterating skips the second — pinned by the round-trip test). The
+NUL-anchored byte-seds are inverted SAME-LENGTH only (a shrinking byte-sed
+would shift every offset after the match and corrupt the Mach-O, so
+`/var/jb` strings are handled exclusively by the load-command ops and the
+`__cstring` rewrite), and `__cstring` strings get the same inverse mapping
+in place. Re-signed with preserved entitlements.
+4. **Plists + scripts** — the inverse sed sequences (the forward collapses
+`/usr/bin` and `/bin` into `/var/bin`, so the reverse picks the common
+rootful form `/usr/bin`; the lossiness is inherent to the forward seds).
 
 **`xkvm roothide`** ports RootHidePatcher's `patch.sh` main path
 (`internal/rootless/roothide.go`) for the inverse direction — a

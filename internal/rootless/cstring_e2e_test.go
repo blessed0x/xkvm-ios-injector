@@ -29,7 +29,14 @@ const dlopenProbeC = `
 #include <dlfcn.h>
 
 // dlopen a rootful path at runtime and report what dlopen actually tried.
+// A guard literal referenced in the first statement keeps the dlopen path
+// from being the FIRST string in __cstring: the Xina pipeline's byte-seds
+// are NUL-anchored (faithful to the Xinam1nePatcher script), so a first
+// string with no preceding NUL is invisible to them — same as upstream.
+// Real tweaks carry other strings first, so the probe mirrors that.
 const char *xkvm_probe(void) {
+    const char *sink = "xkvm-cstring-guard";
+    (void)sink;
     void *h = dlopen("/Library/MobileSubstrate/DynamicLibraries/XkvmRuntimeProbe.dylib", RTLD_NOW);
     if (h != 0) {
         dlclose(h);

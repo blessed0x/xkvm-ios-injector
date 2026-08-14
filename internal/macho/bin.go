@@ -43,6 +43,13 @@ func (b Bin) ReplaceRpath(old, new string) error {
 	return nativeReplaceRpath(b.Path, old, new)
 }
 
+// RemoveRpath deletes an existing LC_RPATH entry (a no-op when no entry
+// matches). Used by the rootful converter to drop the rpaths the forward
+// converters add.
+func (b Bin) RemoveRpath(rpath string) error {
+	return nativeRemoveRpath(b.Path, rpath)
+}
+
 // Rpaths returns the LC_RPATH entries of the first architecture slice.
 func (b Bin) Rpaths() ([]string, error) {
 	return nativeRpaths(b.Path)

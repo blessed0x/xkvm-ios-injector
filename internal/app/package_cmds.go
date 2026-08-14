@@ -216,6 +216,40 @@ func Rootless(input, output string, thin, tweakinject bool) error {
 	return rootless.Convert(input, output, thin, tweakinject)
 }
 
+// RootlessXina is the `xkvm rootless --xina` entry point: convert a rootful
+// .deb to a Xina-style rootless one (the Xinam1nePatcher pipeline: short
+// symlink-form byte seds, @rpath conventions, plist/script seds). See
+// internal/rootless.
+func RootlessXina(input, output string) error {
+	if !strings.HasSuffix(input, ".deb") {
+		return fmt.Errorf("the input must be a .deb")
+	}
+	if _, err := os.Stat(input); err != nil {
+		return fmt.Errorf("%s does not exist", input)
+	}
+	if output == "" {
+		return fmt.Errorf("the output path is required")
+	}
+	return rootless.ConvertToXina(input, output)
+}
+
+// Rootful is the `xkvm rootful` entry point: convert a rootless .deb back to
+// a rootful one (var/jb payload hoisted, /var/jb load commands and string
+// paths plus the Xina short forms rewritten to rootful paths, @rpath
+// substrate shims undone, control edits reversed). See internal/rootless.
+func Rootful(input, output string) error {
+	if !strings.HasSuffix(input, ".deb") {
+		return fmt.Errorf("the input must be a .deb")
+	}
+	if _, err := os.Stat(input); err != nil {
+		return fmt.Errorf("%s does not exist", input)
+	}
+	if output == "" {
+		return fmt.Errorf("the output path is required")
+	}
+	return rootless.ConvertToRootful(input, output)
+}
+
 // Roothide is the `xkvm roothide` entry point: convert a rootless .deb to a
 // roothide-jailbreak one (var/jb payload hoisted to the package root, system
 // files under rootfs/, /var/jb → @loader_path/.jbroot load-command and rpath

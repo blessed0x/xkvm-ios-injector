@@ -884,6 +884,31 @@ func nativeAddRpath(path, rpath string) error {
 	})
 }
 
+// nativeRemoveRpath deletes an LC_RPATH entry (a no-op when no entry
+// matches). Removing a load command shrinks the TOC, so the rebuild simply
+// drops it from f.Loads — mirroring how nativeRemoveSignature drops the
+// LC_CODE_SIGNATURE command via FileTOC.RemoveLoad. The matching loads are
+// collected BEFORE removal: FileTOC.RemoveLoad mutates the slice in place,
+// and removing an entry while ranging over it skips the element that shifts
+// into the removed slot (two adjacent rpaths added back-to-back lose only
+// the first — the exact case the Xina/rootless forward converters produce).
+func nativeRemoveRpath(path, rpath string) error {
+	return editMachO(path, func(f *macho.File, orig []byte) ([]byte, error) {
+		var toRemove []macho.Load
+		for _, l := range f.Loads {
+			if r, ok := l.(*macho.Rpath); ok && r.Path == rpath {
+				toRemove = append(toRemove, l)
+			}
+		}
+		for _, l := range toRemove {
+			if err := f.FileTOC.RemoveLoad(l); err != nil {
+				return nil, err
+			}
+		}
+		return nativeWrite(f, orig, nil)
+	})
+}
+
 // nativeRpaths returns the LC_RPATH paths of the first architecture slice.
 func nativeRpaths(path string) ([]string, error) {
 	f, err := readFirst(path)

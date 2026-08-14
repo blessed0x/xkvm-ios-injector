@@ -17,3 +17,6 @@
 # Session scratch dirs — never commit.
 /.omc/
 /.verifydriver/
+
+# macOS
+.DS_Store

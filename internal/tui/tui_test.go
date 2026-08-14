@@ -178,3 +178,73 @@ func TestTUIConvertFlowRootlessRealDeb(t *testing.T) {
 		}
 	}
 }
+
+// TestTUIConvertFlowXinaAndRootfulRealDeb drives the two new convert options
+// against the real Shadow fixture: menu 3 -> option 3 (Xina-style rootless)
+// converts the rootful deb directly; menu 3 -> option 4 (back to rootful)
+// converts a rootless deb prepared with the real app.Rootless. Both flows
+// must report success and land a real package at the prompted path — pure
+// Go, so they run on every CI leg.
+func TestTUIConvertFlowXinaAndRootfulRealDeb(t *testing.T) {
+	tmp := t.TempDir()
+	fixture, err := filepath.Abs(goldenShadowDeb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(fixture); err != nil {
+		t.Fatalf("golden fixture missing at %s: %v", fixture, err)
+	}
+
+	// --- Option 3: rootful -> Xina-style rootless ---
+	xinaOut := filepath.Join(tmp, "shadow-xina.deb")
+	uiOut := runUI(t, "3\n3\n"+fixture+"\n"+xinaOut+"\nq\n", nil)
+	if !strings.Contains(uiOut, "Xina-style rootless .deb ready") {
+		t.Errorf("xina success line missing; output:\n%s", uiOut)
+	}
+	if _, err := os.Stat(xinaOut); err != nil {
+		t.Fatalf("xina .deb not written to the prompted path %s: %v\noutput:\n%s", xinaOut, err, uiOut)
+	}
+	unpacked := filepath.Join(tmp, "xina-unpacked")
+	if err := deb.Unpack(xinaOut, unpacked); err != nil {
+		t.Fatal(err)
+	}
+	ctl, err := os.ReadFile(filepath.Join(unpacked, "DEBIAN", "control"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(ctl), "(Xinafied-rootless)") {
+		t.Errorf("xina control missing the Name suffix; got:\n%s", ctl)
+	}
+
+	// --- Option 4: rootless -> rootful, on a real rootless deb we prepare
+	// with the real app.Rootless (the menu drives app.Rootful against it).
+	rootlessDeb := filepath.Join(tmp, "shadow-rootless.deb")
+	if err := app.Rootless(fixture, rootlessDeb, false, false); err != nil {
+		t.Fatalf("preparing rootless input: %v", err)
+	}
+	rootfulOut := filepath.Join(tmp, "shadow-rootful.deb")
+	uiOut = runUI(t, "3\n4\n"+rootlessDeb+"\n"+rootfulOut+"\nq\n", nil)
+	if !strings.Contains(uiOut, "rootful .deb ready") {
+		t.Errorf("rootful success line missing; output:\n%s", uiOut)
+	}
+	if _, err := os.Stat(rootfulOut); err != nil {
+		t.Fatalf("rootful .deb not written to the prompted path %s: %v\noutput:\n%s", rootfulOut, err, uiOut)
+	}
+	unpacked2 := filepath.Join(tmp, "rootful-unpacked")
+	if err := deb.Unpack(rootfulOut, unpacked2); err != nil {
+		t.Fatal(err)
+	}
+	ctl2, err := os.ReadFile(filepath.Join(unpacked2, "DEBIAN", "control"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(ctl2), "Architecture: iphoneos-arm") {
+		t.Errorf("rootful control missing iphoneos-arm; got:\n%s", ctl2)
+	}
+	if strings.Contains(string(ctl2), "cy+cpu.arm64v8") {
+		t.Errorf("rootful control still carries the rootless runtime dep; got:\n%s", ctl2)
+	}
+	if _, err := os.Stat(filepath.Join(unpacked2, "Library", "MobileSubstrate", "DynamicLibraries", "Shadow.dylib")); err != nil {
+		t.Errorf("rootful payload missing at package root: %v", err)
+	}
+}
