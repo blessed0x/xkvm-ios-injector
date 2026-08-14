@@ -77,6 +77,13 @@ jobs:
       - name: AutoPatches symlinks (verbose)
         if: matrix.os == 'macos-14'
         run: go test -race -v ./internal/rootless/ -run TestRoothideAutoPatchesSymlinks
+      # Hoist var/ collision (macos-14 only — fixture built with the native
+      # toolchain). Pins upstream's documented "both /var/jb/var/xxx and
+      # /var/xxx" case: jbroot copy wins at the package root, system copy
+      # under rootfs/var/, plus the jb-less system var case.
+      - name: Hoist var collision (verbose)
+        if: matrix.os == 'macos-14'
+        run: go test -race -v ./internal/rootless/ -run TestHoistVarCollision
       # Generality smoke (macos-14 only, needs go + Xcode for Mach-O
       # fixtures): build ten hermetic fixture IPAs with fully generic names
       # and assert xkvm check's exit code on each — the same sweep that ran

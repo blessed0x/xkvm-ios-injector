@@ -115,6 +115,16 @@ func ConvertToRoothide(input, output string, pkgmirror bool, mode string) error 
 // content is merged at the top level. The loose set (top-level entries other
 // than DEBIAN and var/) is captured BEFORE the hoist so the hoisted jbroot
 // content is not mistaken for loose system files.
+//
+// var/ is special: it may hold the jbroot (var/jb) AND system content at the
+// same time — upstream's comment notes packages with both /var/jb/var/xxx
+// and /var/xxx. Upstream hoists into an EMPTY staging root (mv into the
+// fresh NEW dir), so the jbroot copy wins at the package root while the
+// system copy joins rootfs/. The single-dir equivalent: move the system
+// var children to rootfs/var/ first (freeing the root var shell), then
+// scratch-rename the jbroot out of the shell and hoist it into the now-empty
+// root — no rename can collide. A var/ without jb (pure system content)
+// joins rootfs/, and an empty var/ is dropped (upstream `rmdir ... || true`).
 func hoistRootless(dir string) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -130,24 +140,62 @@ func hoistRootless(dir string) error {
 
 	jb := filepath.Join(dir, "var", "jb")
 	if _, err := os.Stat(jb); err == nil {
-		jbEntries, err := os.ReadDir(jb)
+		// 1. System var children (anything in var/ other than jb) move to
+		//    rootfs/var/ first — they are system content, and leaving them in
+		//    place would collide with the hoisted jbroot's own var/.
+		varEntries, err := os.ReadDir(filepath.Join(dir, "var"))
 		if err != nil {
 			return err
 		}
-		for _, e := range jbEntries {
-			if err := os.Rename(filepath.Join(jb, e.Name()), filepath.Join(dir, e.Name())); err != nil {
+		var sysVar []string
+		for _, e := range varEntries {
+			if e.Name() != "jb" {
+				sysVar = append(sysVar, e.Name())
+			}
+		}
+		if len(sysVar) > 0 {
+			rootfsVar := filepath.Join(dir, "rootfs", "var")
+			if err := os.MkdirAll(rootfsVar, 0o755); err != nil {
+				return err
+			}
+			for _, n := range sysVar {
+				if err := os.Rename(filepath.Join(dir, "var", n), filepath.Join(rootfsVar, n)); err != nil {
+					return err
+				}
+			}
+		}
+		// 2. Scratch-rename the jbroot out of the shell, then drop the shell
+		//    (empty now). If it somehow isn't empty, it's system content and
+		//    joins the rootfs move below (upstream `rmdir ... || true`).
+		tmp := filepath.Join(dir, ".xkvm-jbroot-tmp")
+		if err := os.Rename(jb, tmp); err != nil {
+			return err
+		}
+		if err := os.Remove(filepath.Join(dir, "var")); err != nil {
+			loose = append(loose, "var")
+		}
+		// 3. Hoist into the now-empty root (only DEBIAN + rootfs/ present).
+		tmpEntries, err := os.ReadDir(tmp)
+		if err != nil {
+			return err
+		}
+		for _, e := range tmpEntries {
+			if err := os.Rename(filepath.Join(tmp, e.Name()), filepath.Join(dir, e.Name())); err != nil {
 				return err
 			}
 		}
-		if err := os.Remove(jb); err != nil {
+		if err := os.Remove(tmp); err != nil {
 			return err
 		}
-		// Best-effort removal of the emptied var/ (upstream rmdir with
-		// `|| true`).
-		_ = os.Remove(filepath.Join(dir, "var"))
 		log.Infof("hoisted var/jb payload to package root")
 	} else if err != nil && !os.IsNotExist(err) {
 		return err
+	} else {
+		// No var/jb: an empty var/ is dropped; a var/ with system content
+		// joins the rootfs move (upstream rmdir fails -> rootfs).
+		if err := os.Remove(filepath.Join(dir, "var")); err != nil {
+			loose = append(loose, "var")
+		}
 	}
 
 	if len(loose) == 0 {

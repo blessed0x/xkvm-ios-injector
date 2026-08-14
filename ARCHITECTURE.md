@@ -462,7 +462,16 @@ rootless-jailbreak deb becomes a roothide-jailbreak package:
 1. **Hoist** — `var/jb/*` is moved to the package root; any other top-level
 payload entries land under `rootfs/` (on roothide the real system root is
 exposed at `/rootfs`). The loose set is captured *before* the hoist so the
-jbroot content is never mistaken for system files.
+jbroot content is never mistaken for system files. `var/` is special: it
+can hold the jbroot *and* system content at once (upstream's comment notes
+packages with both `/var/jb/var/xxx` and `/var/xxx`). The hoist mirrors
+upstream's empty-staging-root model — system `var/` children move to
+`rootfs/var/` first, the jbroot is scratch-renamed out of the shell, and the
+hoist lands in the now-empty root — so the jbroot copy wins at the package
+root while the system copy stays under `rootfs/var/` (pinned by
+`TestHoistVarCollision`). A `var/` with no jb at all is system content and
+also lands under `rootfs/var/`; an empty `var/` is dropped (upstream
+`rmdir ... || true`).
 2. **Control** — `Architecture → iphoneos-arm64e`; the `Conflicts`
 "roothide" mangle; and the mode-dependent edits: default adds none,
 `--mode auto` adds `rootless-compat(>= 0.9)`, `--mode dynamic` adds a
