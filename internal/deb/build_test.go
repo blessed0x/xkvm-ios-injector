@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -26,9 +27,16 @@ func TestBuildUnpackRoundTrip(t *testing.T) {
 	os.WriteFile(filepath.Join(staging, "usr", "lib", "libextra.dylib"), []byte("extra"), 0o644)
 	// A payload symlink must be written as a tar symlink entry (the reader
 	// deliberately skips symlinks — see deb.go — so it is asserted at the
-	// tar level below, not after Unpack).
+	// tar level below, not after Unpack). Windows CI runners can't create
+	// symlinks without developer mode, so the link half only runs where
+	// os.Symlink works; the rest of the round trip still asserts.
+	linkOK := true
 	if err := os.Symlink("/var/jb/Library/MobileSubstrate/DynamicLibraries/Demo.dylib", filepath.Join(dl, "Link.dylib")); err != nil {
-		t.Fatal(err)
+		if runtime.GOOS == "windows" {
+			linkOK = false
+		} else {
+			t.Fatal(err)
+		}
 	}
 
 	out := filepath.Join(tmp, "demo.deb")
@@ -127,7 +135,7 @@ func TestBuildUnpackRoundTrip(t *testing.T) {
 	if sawDebian {
 		t.Error("data.tar must not contain DEBIAN entries (dpkg would create /DEBIAN on install)")
 	}
-	if !foundLink {
+	if !foundLink && linkOK {
 		t.Error("Link.dylib symlink entry missing from data.tar")
 	}
 }

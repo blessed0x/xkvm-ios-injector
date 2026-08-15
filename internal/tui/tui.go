@@ -19,7 +19,9 @@ import (
 
 	"github.com/xscope0/xkvm-ios-injector/internal/app"
 	"github.com/xscope0/xkvm-ios-injector/internal/cyanfile"
+	"github.com/xscope0/xkvm-ios-injector/internal/fetch"
 	"github.com/xscope0/xkvm-ios-injector/internal/log"
+	"github.com/xscope0/xkvm-ios-injector/internal/patch"
 )
 
 // UI holds the interactive session state.
@@ -31,6 +33,16 @@ type UI struct {
 	Animate bool // animated banner + spinner on
 	// Run is injectable (tests capture instead of touching real apps).
 	Run func(ctx context.Context, opts *app.Options) error
+	// Fetch resolves tweak bundle ids to local .deb paths. Injectable so tests
+	// don't hit the network; the real resolver is fetch.Resolve.
+	Fetch func(ctx context.Context, ids, sources []string, noRecurse bool, cacheDir string) ([]string, error)
+	// CacheUsage reports the fetch cache (directory, deb count, total bytes),
+	// CachePrune removes entries older than the 7-day TTL, and CacheClear
+	// removes every entry. Injectable so tests stay off the real user cache
+	// dir; the defaults are fetch.CacheUsage / PruneExpired / ClearCache.
+	CacheUsage func() (dir string, debs int, bytes int64, err error)
+	CachePrune func() (removed int, err error)
+	CacheClear func() (removed int, err error)
 }
 
 // New returns a UI for the current terminal. Color and animation are enabled
@@ -38,23 +50,29 @@ type UI struct {
 func New() *UI {
 	term := isTerminal(os.Stdout)
 	return &UI{
-		In:      bufio.NewReader(os.Stdin),
-		Out:     os.Stdout,
-		Err:     os.Stderr,
-		Color:   term && os.Getenv("NO_COLOR") == "",
-		Animate: term,
-		Run:     app.Run,
+		In:         bufio.NewReader(os.Stdin),
+		Out:        os.Stdout,
+		Err:        os.Stderr,
+		Color:      term && os.Getenv("NO_COLOR") == "",
+		Animate:    term,
+		Run:        app.Run,
+		CacheUsage: fetch.CacheUsage,
+		CachePrune: fetch.PruneExpired,
+		CacheClear: fetch.ClearCache,
 	}
 }
 
 // NewForTest builds a non-animated UI reading from r and writing to w.
 func NewForTest(r io.Reader, w io.Writer) *UI {
 	return &UI{
-		In:    bufio.NewReader(r),
-		Out:   w,
-		Err:   w,
-		Color: false,
-		Run:   app.Run,
+		In:         bufio.NewReader(r),
+		Out:        w,
+		Err:        w,
+		Color:      false,
+		Run:        app.Run,
+		CacheUsage: fetch.CacheUsage,
+		CachePrune: fetch.PruneExpired,
+		CacheClear: fetch.ClearCache,
 	}
 }
 
@@ -84,8 +102,12 @@ func (u *UI) Start() {
 			u.help()
 		case "7", "about", "a":
 			u.about()
+		case "8", "fetch", "f":
+			u.flowFetch()
+		case "9", "cache":
+			u.flowCache()
 		default:
-			u.say(anYellow, "hmm, I didn't get that. try a number from the list!")
+			u.say(anYellow, "hmm, I didn't get that. try a number from the list, or q to quit.")
 		}
 		u.pressEnterToContinue()
 	}
@@ -96,12 +118,15 @@ func (u *UI) menu() {
 	fmt.Fprintln(u.Out)
 	u.title("pick a tool")
 	fmt.Fprintln(u.Out, u.paint(anCyan, "  1. "+anBold+"inject")+"  —  put a tweak (dylib / deb / .cyan) into an app or .ipa")
-	fmt.Fprintln(u.Out, u.paint(anCyan, "  2. "+anBold+"extract")+" —  pull tweaks OUT of an app so you can reuse them")
+	fmt.Fprintln(u.Out, u.paint(anCyan, "  2. "+anBold+"extract")+" —  pull tweaks OUT of an app or a .deb so you can reuse them")
 	fmt.Fprintln(u.Out, u.paint(anCyan, "  3. "+anBold+"convert")+" —  change a tweak package format (rootful / rootless / roothide)")
 	fmt.Fprintln(u.Out, u.paint(anCyan, "  4. "+anBold+"build")+"   —  wrap a dylib into a shareable .deb or .cyan file")
 	fmt.Fprintln(u.Out, u.paint(anCyan, "  5. "+anBold+"check")+"   —  make sure an app's tweaks won't crash (missing files?)")
 	fmt.Fprintln(u.Out, u.paint(anCyan, "  6. "+anBold+"help")+"    —  plain-language guide + real command examples")
 	fmt.Fprintln(u.Out, u.paint(anCyan, "  7. "+anBold+"about")+"   —  what xkvm is and why it exists")
+	fmt.Fprintln(u.Out, u.paint(anCyan, "  8. "+anBold+"fetch")+"   —  download a tweak by its bundle id from the repos")
+	fmt.Fprintln(u.Out, u.paint(anCyan, "  9. "+anBold+"cache")+"   —  see and tidy the folder where downloaded tweaks are stored")
+	fmt.Fprintln(u.Out, u.paint(anCyan, "  q. "+anBold+"quit")+"   —  leave xkvm")
 }
 
 // say prints a colored message.
@@ -130,13 +155,26 @@ func (u *UI) readLine(prompt string) string {
 
 // confirm asks a yes/no question; the default (empty answer) is yes.
 func (u *UI) confirm(prompt string) bool {
-	a := u.readLine(prompt + " [Y/n] ")
+	return u.askYesNo(prompt, true)
+}
+
+// askYesNo asks a yes/no question with an explicit default: an empty answer
+// (or anything that isn't a clear yes/no) resolves to def. Used for options
+// that are OFF by default on the command line (thin, tweakinject, pkgmirror)
+// so the menu doesn't silently turn them on.
+func (u *UI) askYesNo(prompt string, def bool) bool {
+	suffix := " [y/N] "
+	if def {
+		suffix = " [Y/n] "
+	}
+	a := u.readLine(prompt + suffix)
 	switch strings.ToLower(a) {
+	case "y", "yes":
+		return true
 	case "n", "no":
 		return false
-	default:
-		return true
 	}
+	return def
 }
 
 // pressEnterToContinue waits for Enter unless input is not interactive.
@@ -158,9 +196,8 @@ func captureLogs(fn func() error) (string, error) {
 }
 
 // runSpinning runs fn under the block spinner, returning captured log output
-// plus the error. When fn fails without logging anything itself (a plain
-// returned error), the error text is folded into the captured output so the
-// "what happened" panel always says why.
+// plus the error. The reason for a failure is always printed by showResult,
+// so nothing is folded into the captured output here.
 func (u *UI) runSpinning(msg string, fn func() error) (string, error) {
 	var out string
 	var err error
@@ -168,9 +205,6 @@ func (u *UI) runSpinning(msg string, fn func() error) (string, error) {
 		out, err = captureLogs(fn)
 		return err
 	})
-	if err != nil && strings.TrimSpace(out) == "" {
-		out = err.Error()
-	}
 	return out, err
 }
 
@@ -186,7 +220,8 @@ func (u *UI) showResult(out string, err error, okMsg string) {
 	fmt.Fprintln(u.Out)
 	if err != nil {
 		u.say(anRed, "[fail] "+okMsg)
-		u.say(anYellow, "  that didn't work — check the lines above, they usually say why.")
+		u.say(anRed, "  why: "+err.Error())
+		u.say(anYellow, "  that didn't work — check the lines above for the full story.")
 	} else {
 		u.say(anGreen, "[ok] "+okMsg)
 	}
@@ -200,8 +235,8 @@ func (u *UI) pickOne(question string, options []string) int {
 		fmt.Fprintf(u.Out, "  %s%d. %s%s\n", u.paint(anCyan, ""), i+1, o, u.paint(anCyan, ""))
 	}
 	for {
-		line := u.readLine("pick one (number) — or leave empty to cancel: ")
-		if line == "" {
+		line := u.readLine("pick one (number), q to quit, or leave empty to cancel: ")
+		if line == "" || isCancel(line) {
 			return -1
 		}
 		for i := range options {
@@ -211,6 +246,17 @@ func (u *UI) pickOne(question string, options []string) int {
 		}
 		u.say(anYellow, "  try a number from the list!")
 	}
+}
+
+// isCancel reports whether a typed answer means "leave this flow" (q, quit,
+// back, cancel, menu, exit). Used so users who don't know the menu loop can
+// bail out of any question without losing their place.
+func isCancel(s string) bool {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "q", "quit", "exit", "back", "cancel", "menu":
+		return true
+	}
+	return false
 }
 
 // pathPrompt asks for a path, defaulting to def if the user enters nothing.
@@ -226,14 +272,39 @@ func (u *UI) pathPrompt(question, def string) string {
 	return p
 }
 
-// requirePath loops until a non-empty path is given (or EOF → cancel).
+// requirePath loops until a non-empty path is given, backing out to the menu
+// on a second empty answer (or an immediate q / quit / back / cancel).
 func (u *UI) requirePath(question, def string) string {
+	return u.requireAnswer(question, def, "path")
+}
+
+// requireText is requirePath for non-path answers (bundle ids, names).
+func (u *UI) requireText(question string) string {
+	return u.requireAnswer(question, "", "answer")
+}
+
+// requireAnswer drives the shared required-input loop used for both paths and
+// plain text: the first empty answer gets a nudge, the second one in a row
+// sends the user back to the menu, and q / quit / back / cancel does the same
+// immediately. Returns "" on cancel.
+func (u *UI) requireAnswer(question, def, noun string) string {
+	empties := 0
 	for {
 		p := u.pathPrompt(question, def)
+		if isCancel(p) {
+			u.say(anYellow, "ok, back to the menu.")
+			return ""
+		}
 		if p != "" {
 			return p
 		}
-		u.say(anYellow, "  that needs a path — try again, or press ctrl-c to stop.")
+		empties++
+		if empties == 1 {
+			u.say(anYellow, "  that needs a "+noun+". type it, or press enter again to go back to the menu.")
+			continue
+		}
+		u.say(anYellow, "  ok, back to the menu.")
+		return ""
 	}
 }
 
@@ -251,26 +322,75 @@ func (u *UI) flowInject() {
 	if tweak == "" {
 		return
 	}
+	u.runInject(appPath, []string{tweak})
+}
+
+// runInject collects the output path and option questions, then runs the
+// injection. Shared by flowInject and flowFetch (which hands over the .debs
+// it downloaded).
+func (u *UI) runInject(appPath string, files []string) {
 	outPath := u.pathPrompt("where should the result go? (leave empty for: <app>-tweaked.ipa)", "")
 	opts := &app.Options{
 		Input:     appPath,
 		Output:    outPath,
-		Files:     []string{tweak},
+		Files:     files,
 		Fakesign:  true, // every sideload path needs a signature
 		Overwrite: true,
+	}
+	if u.confirm("change the app's bundle id, name, or icon? (useful when re-signing so apps don't clash)") {
+		if v := u.pathPrompt("new bundle id? (leave empty to keep the current one)", ""); v != "" {
+			opts.BundleID = v
+		}
+		if v := u.pathPrompt("new display name? (leave empty to keep the current one)", ""); v != "" {
+			opts.Name = v
+		}
+		if v := u.pathPrompt("path to a new icon image? (leave empty to keep the current one)", ""); v != "" {
+			opts.Icon = v
+		}
 	}
 	if u.confirm("should I also inject the bundled 'sideload fixes' (helps apps work on devices without a jailbreak)?") {
 		opts.Patch = true
 	}
+	if u.confirm("use the real ElleKit runtime for hooking? (the modern hooking engine; pick this if a tweak asks for ellekit)") {
+		opts.ElleKit = true
+	}
+	if len(files) == 1 && strings.HasSuffix(strings.ToLower(files[0]), ".dylib") {
+		if u.confirm("keep this tweak at the app root instead of in Frameworks/? (yes, for dylibs that load files next to themselves)") {
+			opts.RootDylibs = append(opts.RootDylibs, files[0])
+		}
+	}
 	fmt.Fprintln(u.Out)
-	out, err := u.runSpinning("injecting "+shortName(tweak)+" into "+shortName(appPath)+"...", func() error {
+	out, err := u.runSpinning("injecting "+shortName(files[0])+" into "+shortName(appPath)+"...", func() error {
 		return u.Run(context.Background(), opts)
 	})
 	u.showResult(out, err, "your tweaked app is ready!")
 }
 
-// flowExtract is menu 2: pull tweaks out of an app.
+// flowExtract is menu 2: pull tweaks out of an app or a .deb.
 func (u *UI) flowExtract() {
+	i := u.pickOne("what do you want to pull tweaks from?", []string{
+		"an app (.ipa / .tipa / .app)",
+		"a .deb package",
+	})
+	if i < 0 {
+		return
+	}
+	if i == 1 {
+		u.title("extract from a .deb")
+		u.say(anWhite, "xkvm opens a tweak .deb and copies the dylibs and bundles inside to a")
+		u.say(anWhite, "folder — so you can reuse them in an app, or re-inject them elsewhere.")
+		fmt.Fprintln(u.Out)
+		debPath := u.requirePath("which .deb should I open?", "")
+		if debPath == "" {
+			return
+		}
+		outDir := u.pathPrompt("where should the tweaks go? (leave empty for: ./extracted)", "extracted")
+		out, err := u.runSpinning("opening "+shortName(debPath)+"...", func() error {
+			return app.Undeb(debPath, outDir)
+		})
+		u.showResult(out, err, "tweaks extracted to "+outDir+" — re-inject them with menu 1!")
+		return
+	}
 	u.title("extract")
 	u.say(anWhite, "xkvm opens an app and copies the tweaks inside (dylibs, frameworks,")
 	u.say(anWhite, "bundles) to a folder — so you can reuse them in another app.")
@@ -305,13 +425,22 @@ func (u *UI) flowConvert() {
 	out := u.pathPrompt("output .deb path? (leave empty for: <name>-converted.deb)", "")
 	switch i {
 	case 0:
+		// The CLI's --thin / --tweakinject, both off by default.
+		thin := u.askYesNo("thin the binaries to arm64 only?", false)
+		tweakInject := u.askYesNo("use the modern TweakInject layout? (DynamicLibraries → var/jb/usr/lib/TweakInject)", false)
 		out, err := u.runSpinning("converting to rootless...", func() error {
-			return app.Rootless(in, out, false, false)
+			return app.Rootless(in, out, thin, tweakInject)
 		})
 		u.showResult(out, err, "rootless .deb ready — installable on Dopamine/ellekit setups!")
 	case 1:
+		// The CLI's --pkgmirror / --mode.
+		pkgmirror := u.askYesNo("use pkgmirror mode? (symlink-based patches, roothide's modern install path)", false)
+		mode := u.pathPrompt("patch mode? (auto or dynamic — leave empty for auto)", "auto")
+		if mode == "" {
+			mode = "auto"
+		}
 		out, err := u.runSpinning("converting to roothide...", func() error {
-			return app.Roothide(in, out, false, "")
+			return app.Roothide(in, out, pkgmirror, mode)
 		})
 		u.showResult(out, err, "roothide .deb ready!")
 	case 2:
@@ -329,14 +458,46 @@ func (u *UI) flowConvert() {
 
 // flowBuild is menu 4: wrap a dylib into a .deb or generate a .cyan config.
 func (u *UI) flowBuild() {
-	i := u.pickOne("build something shareable", []string{
+	i := u.pickOne("build or check something", []string{
 		"wrap a dylib into a .deb  (classic jailbreak package)",
 		"generate a .cyan config  (a recipe other people can apply)",
+		"check a .cyan config  (find problems before applying it)",
 	})
 	if i < 0 {
 		return
 	}
 	switch i {
+	case 2:
+		cyan := u.requirePath("which .cyan file should I check?", "")
+		if cyan == "" {
+			return
+		}
+		out, err := u.runSpinning("checking "+shortName(cyan)+"...", func() error {
+			known := map[string]bool{}
+			for _, n := range patch.Names() {
+				known[n] = true
+			}
+			issues, err := cyanfile.Validate(cyan, known)
+			if err != nil {
+				return err
+			}
+			errs, warns := 0, 0
+			for _, is := range issues {
+				if is.Level == cyanfile.IssueError {
+					errs++
+					log.Errorf("problem: %s", is.Message)
+				} else {
+					warns++
+					log.Warnf("warning: %s", is.Message)
+				}
+			}
+			log.Infof("%d problem(s), %d warning(s)", errs, warns)
+			if errs > 0 {
+				return fmt.Errorf("%d problem(s) found — fix the recipe, then check it again", errs)
+			}
+			return nil
+		})
+		u.showResult(out, err, "that .cyan checks out — safe to apply!")
 	case 0:
 		dylib := u.requirePath("which dylib should I wrap?", "")
 		if dylib == "" {
@@ -363,6 +524,59 @@ func (u *UI) flowBuild() {
 		})
 		u.showResult(outCyan, err, ".cyan recipe ready — share it, or apply it with menu 1!")
 	}
+}
+
+// flowFetch is menu 8: download a tweak by its bundle id from the
+// Canister/MobileAPT repos, then offer to inject it into an app.
+func (u *UI) flowFetch() {
+	u.title("fetch")
+	u.say(anWhite, "xkvm looks up a tweak by its bundle id (like com.example.tweak) in the")
+	u.say(anWhite, "Canister / MobileAPT repos, downloads the .deb and its dependencies,")
+	u.say(anWhite, "and puts them in a folder you choose.")
+	fmt.Fprintln(u.Out)
+	id := u.requireText("which tweak do you want? (its bundle id, e.g. com.hax0r.tweak)")
+	if id == "" {
+		return
+	}
+	// The CLI's --apt-source, one URL per line (space-separated is fine).
+	var sources []string
+	if src := u.pathPrompt("any repo to check first? (a URL like https://repo.chariz.com — optional)", ""); src != "" {
+		sources = strings.Fields(src)
+	}
+	// The CLI's --no-recurse, inverted into a friendly question: dependencies
+	// are fetched by default, matching the CLI.
+	noRecurse := !u.askYesNo("also download this tweak's dependencies?", true)
+	outDir := u.pathPrompt("where should the downloaded .debs go? (leave empty for: ./fetched)", "fetched")
+	var fetched []string
+	out, err := u.runSpinning("looking up "+id+"...", func() error {
+		paths, ferr := u.fetchTweaks(context.Background(), []string{id}, sources, noRecurse, outDir)
+		if ferr != nil {
+			return ferr
+		}
+		fetched = paths
+		return nil
+	})
+	if err != nil {
+		u.showResult(out, err, "nothing fetched")
+		return
+	}
+	u.showResult(out, nil, fmt.Sprintf("fetched %d .deb(s) to %s — re-inject them with menu 1!", len(fetched), outDir))
+	if len(fetched) == 0 || !u.confirm("want to inject this tweak into an app right now?") {
+		return
+	}
+	appPath := u.requirePath("which app should I tweak? (.ipa / .tipa / .app)", "")
+	if appPath != "" {
+		u.runInject(appPath, fetched)
+	}
+}
+
+// fetchTweaks resolves bundle ids to local .deb paths, using the injectable
+// Fetch when set and the real Canister/MobileAPT resolver otherwise.
+func (u *UI) fetchTweaks(ctx context.Context, ids, sources []string, noRecurse bool, cacheDir string) ([]string, error) {
+	if u.Fetch != nil {
+		return u.Fetch(ctx, ids, sources, noRecurse, cacheDir)
+	}
+	return fetch.Resolve(ctx, ids, sources, noRecurse, cacheDir, nil)
 }
 
 // flowCheck is menu 5: the merge-completeness check.
@@ -393,20 +607,29 @@ func (u *UI) help() {
 		"  what xkvm can do for you",
 		"  ────────────────────────",
 		"  • inject  — add a tweak to an app (the main job)",
-		"  • extract — take tweaks OUT of an app, to reuse them",
+		"  • extract — take tweaks OUT of an app or a .deb, to reuse them",
 		"  • convert — change a package for a different jailbreak (rootful / rootless / roothide)",
 		"  • build   — package a dylib for sharing",
 		"  • check   — find missing files before you install",
+		"  • cyan-check — find problems in a .cyan recipe before you apply it",
+		"  • fetch   — download a tweak from the repos by its bundle id",
+		"  • cache   — see the folder where fetched tweaks are kept (reused so",
+		"    you don't download twice, auto-cleaned after 7 days), and tidy it",
 		"",
 		"the same tools on the command line",
 		"  ────────────────────────────────",
 		"  xkvm -i App.ipa -f MyTweak.dylib -o App-Tweaked.ipa   # inject",
-		"  xkvm extract -i App.ipa -o tweaks/                   # extract",
+		"  xkvm -i App.ipa --fetch com.example.tweak -o App-Tweaked.ipa   # fetch a tweak by id",
+		"  xkvm extract -i App.ipa -o tweaks/                   # extract from an app",
+		"  xkvm undeb -i tweak.deb -o tweaks/                   # extract from a .deb",
 		"  xkvm rootless -i tweak.deb -o tweak-rootless.deb     # convert to rootless",
 		"  xkvm rootless --xina -i tweak.deb -o tweak-xina.deb  # convert to rootless, Xina style",
 		"  xkvm rootful -i tweak-rootless.deb -o tweak.deb      # convert back to rootful",
 		"  xkvm debify -i MyTweak.dylib -o MyTweak.deb          # build a .deb",
 		"  xkvm check -i App-Tweaked.ipa                        # check for trouble",
+		"  xkvm cyan-check recipe.cyan                          # check a recipe",
+		"  xkvm cache                                          # show the fetch cache folder",
+		"  xkvm cache --clear                                  # empty the fetch cache",
 		"  xkvm --help                                          # every flag, explained",
 		"",
 		"good to know",
@@ -448,6 +671,62 @@ func (u *UI) about() {
 	}
 	for _, ln := range about {
 		fmt.Fprintln(u.Out, ln)
+	}
+}
+
+// flowCache is menu 9: show the persistent fetch cache and tidy it. This is
+// the visible face of the smart dependency solver — the folder where
+// downloaded tweaks are kept so a repeat fetch is served from disk instead
+// of the network, auto-cleaned after 7 days.
+func (u *UI) flowCache() {
+	u.title("cache")
+	u.say(anWhite, "xkvm keeps downloaded tweaks in a folder on this computer, so fetching")
+	u.say(anWhite, "the same tweak twice doesn't download it again. entries older than 7 days")
+	u.say(anWhite, "are removed automatically the next time xkvm fetches.")
+	fmt.Fprintln(u.Out)
+
+	dir, debs, bytes, err := u.CacheUsage()
+	if err != nil {
+		u.say(anRed, "couldn't read the cache: "+err.Error())
+		return
+	}
+	u.say(anCyan, "cache folder: "+dir)
+	if debs == 0 {
+		u.say(anGreen, "it's empty right now — fetch something (menu 8) and it'll show up here.")
+		return
+	}
+	u.say(anCyan, fmt.Sprintf("%d cached tweak(s), %s", debs, fetch.HumanBytes(bytes)))
+
+	i := u.pickOne("what should I do with the cache?", []string{
+		"remove only the old entries (7 days or older)",
+		"clear the whole cache",
+	})
+	if i < 0 {
+		return
+	}
+	var out string
+	var werr error
+	switch i {
+	case 0:
+		out, werr = u.runSpinning("removing old entries...", func() error {
+			n, rerr := u.CachePrune()
+			if rerr != nil {
+				return rerr
+			}
+			log.Infof("removed %d expired entry/ies", n)
+			return nil
+		})
+		u.showResult(out, werr, "old entries cleaned up!")
+	case 1:
+		out, werr = u.runSpinning("clearing the cache...", func() error {
+			n, rerr := u.CacheClear()
+			if rerr != nil {
+				return rerr
+			}
+			log.Infof("removed %d cached .deb(s)", n)
+			return nil
+		})
+		u.showResult(out, werr, "cache cleared — the next fetch starts fresh.")
 	}
 }
 

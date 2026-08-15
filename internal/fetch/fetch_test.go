@@ -11,7 +11,18 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
+
+// TestMain pins defaultRepos to an empty sweep list so no test accidentally
+// sweeps the real 80-repo list over the network (the miss path would
+// otherwise turn an unresolvable-id test into 80 sequential real requests).
+// Tests that exercise the sweep swap in their own httptest servers (see
+// TestResolveFallsBackToDefaultRepos).
+func TestMain(m *testing.M) {
+	defaultRepos = nil
+	os.Exit(m.Run())
+}
 
 // repoServer is a hermetic MobileAPT repo: a Packages.gz index built from
 // entries, plus .deb files served from files.
@@ -80,8 +91,10 @@ func canisterRepoStub(t *testing.T, pkgs map[string]string, repos map[string]str
 
 func assertDeb(t *testing.T, path, id, want string) {
 	t.Helper()
-	if filepath.Base(path) != id+".deb" {
-		t.Errorf("deb path %q does not end with %s.deb", path, id)
+	// The repoServer index writes Version: 1.0, so cache files are
+	// versioned: <id>__1.0.deb.
+	if filepath.Base(path) != id+"__1.0.deb" {
+		t.Errorf("deb path %q does not end with %s__1.0.deb", path, id)
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -262,6 +275,9 @@ func TestResolveRefusesTraversalDepends(t *testing.T) {
 	}
 	srv := httptest.NewServer(rs.handler())
 	defer srv.Close()
+	// The traversal id is unknown to Canister too; stub it to 404 so the
+	// lookup fails locally instead of leaking to the real index.
+	canisterRepoStub(t, map[string]string{}, map[string]string{})
 
 	_, err := Resolve(t.Context(), []string{"com.example.alpha"}, []string{srv.URL}, false, t.TempDir(), srv.Client())
 	if err == nil {
@@ -305,6 +321,221 @@ func TestResolveSHA256Mismatch(t *testing.T) {
 
 // TestLiveCanisterFetch is the network-gated smoke test: it hits the real
 // Canister index and a real repo. Skipped unless XKVM_LIVE_FETCH=1.
+// countingRepo wraps a repoServer handler and counts deb downloads (paths
+// under /debs/), so tests can prove the cache short-circuits the network.
+type countingRepo struct {
+	srv       *httptest.Server
+	downloads int
+}
+
+func newCountingRepo(t *testing.T, rs *repoServer) *countingRepo {
+	t.Helper()
+	c := &countingRepo{}
+	c.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/debs/") {
+			c.downloads++
+		}
+		rs.handler().ServeHTTP(w, r)
+	}))
+	t.Cleanup(c.srv.Close)
+	return c
+}
+
+// TestResolveReusesCachedDependency pins the smart-dependency cache: the
+// second resolve of the same id+version into the same cache dir must not hit
+// the network for the deb (only the index is fetched again).
+func TestResolveReusesCachedDependency(t *testing.T) {
+	rs := &repoServer{
+		entries: map[string]string{"com.example.alpha": ""},
+		files:   map[string][]byte{"debs/com.example.alpha.deb": []byte("alpha-deb")},
+	}
+	c := newCountingRepo(t, rs)
+	cache := t.TempDir()
+
+	if _, err := Resolve(t.Context(), []string{"com.example.alpha"}, []string{c.srv.URL}, true, cache, c.srv.Client()); err != nil {
+		t.Fatal(err)
+	}
+	if c.downloads != 1 {
+		t.Fatalf("first resolve should download the deb once, got %d", c.downloads)
+	}
+	if _, err := Resolve(t.Context(), []string{"com.example.alpha"}, []string{c.srv.URL}, true, cache, c.srv.Client()); err != nil {
+		t.Fatal(err)
+	}
+	if c.downloads != 1 {
+		t.Errorf("second resolve must reuse the cached deb (downloads=%d, want 1)", c.downloads)
+	}
+}
+
+// TestCachedShaMismatchRedownloads pins that a cached file failing the
+// expected sha (e.g. the repo republished the same version) is re-downloaded
+// rather than trusted blindly.
+func TestCachedShaMismatchRedownloads(t *testing.T) {
+	rs := &repoServer{
+		entries: map[string]string{"com.example.alpha": ""},
+		files:   map[string][]byte{"debs/com.example.alpha.deb": []byte("alpha-deb")},
+	}
+	srv := httptest.NewServer(rs.handler())
+	defer srv.Close()
+	cache := t.TempDir()
+
+	// Prime the cache with a stale file that doesn't match the deb's sha.
+	stale := filepath.Join(cache, "com.example.alpha__1.0.deb")
+	if err := os.WriteFile(stale, []byte("wrong-bytes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	debs, err := Resolve(t.Context(), []string{"com.example.alpha"}, []string{srv.URL}, true, cache, srv.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(debs[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "alpha-deb" {
+		t.Errorf("cached stale bytes must be replaced by the real download, got %q", data)
+	}
+}
+
+// TestPruneCacheTTL pins the 7-day automatic cleanup: entries older than
+// cacheTTL are dropped, fresh ones survive.
+func TestPruneCacheTTL(t *testing.T) {
+	dir := t.TempDir()
+	old := filepath.Join(dir, "com.example.old__1.0.deb")
+	fresh := filepath.Join(dir, "com.example.fresh__1.0.deb")
+	notDeb := filepath.Join(dir, "notes.txt")
+	for _, p := range []string{old, fresh, notDeb} {
+		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	now := time.Now()
+	daysAgo := now.Add(-8 * 24 * time.Hour)
+	if err := os.Chtimes(old, daysAgo, daysAgo); err != nil {
+		t.Fatal(err)
+	}
+
+	pruneCache(dir, now)
+
+	if _, err := os.Stat(old); !os.IsNotExist(err) {
+		t.Errorf("entry older than the 7-day TTL should be pruned, stat err=%v", err)
+	}
+	if _, err := os.Stat(fresh); err != nil {
+		t.Errorf("fresh entry must survive the prune: %v", err)
+	}
+	if _, err := os.Stat(notDeb); err != nil {
+		t.Errorf("non-deb files must never be pruned: %v", err)
+	}
+}
+
+// TestResolveFallsBackToDefaultRepos pins the smart dependency solver's last
+// tier: when neither the explicit sources nor Canister know the id, the
+// built-in default repo list is swept for a Packages-index hit.
+func TestResolveFallsBackToDefaultRepos(t *testing.T) {
+	rs := &repoServer{
+		entries: map[string]string{"com.example.niche": ""},
+		files:   map[string][]byte{"debs/com.example.niche.deb": []byte("niche-deb")},
+	}
+	fallback := httptest.NewServer(rs.handler())
+	defer fallback.Close()
+
+	old := defaultRepos
+	defaultRepos = []string{fallback.URL}
+	t.Cleanup(func() { defaultRepos = old })
+	canisterRepoStub(t, map[string]string{}, map[string]string{}) // Canister 404s everything
+
+	debs, err := Resolve(t.Context(), []string{"com.example.niche"}, nil, true, t.TempDir(), fallback.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(debs) != 1 {
+		t.Fatalf("want the fallback-resolved deb, got %v", debs)
+	}
+	assertDeb(t, debs[0], "com.example.niche", "niche-deb")
+}
+
+// TestCountCache pins the cache inspection used by `xkvm cache` and the TUI
+// cache menu: only .deb files count, sizes add up, non-deb files are ignored.
+func TestCountCache(t *testing.T) {
+	dir := t.TempDir()
+	for name, content := range map[string]string{
+		"com.example.a__1.0.deb": "0123456789",       // 10 bytes
+		"com.example.b__2.0.deb": "0123456789012345", // 16 bytes
+		"notes.txt":              "ignore me",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	debs, bytes, err := countCache(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if debs != 2 || bytes != 26 {
+		t.Errorf("countCache = %d debs, %d bytes; want 2 debs, 26 bytes", debs, bytes)
+	}
+}
+
+// TestClearCacheDir pins the explicit wipe: every .deb goes regardless of
+// age; non-deb files and directories survive.
+func TestClearCacheDir(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"a__1.0.deb", "b__1.0.deb", "notes.txt"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := clearCacheDir(dir); got != 2 {
+		t.Fatalf("clearCacheDir removed %d, want 2", got)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "notes.txt")); err != nil {
+		t.Errorf("non-deb file must survive a cache clear: %v", err)
+	}
+}
+
+// TestPruneExpiredAt pins the exported prune path (used by the TUI cache
+// menu and `xkvm cache`): only entries older than the 7-day TTL are removed,
+// and the count matches.
+func TestPruneExpiredAt(t *testing.T) {
+	dir := t.TempDir()
+	old := filepath.Join(dir, "old__1.0.deb")
+	fresh := filepath.Join(dir, "fresh__1.0.deb")
+	for _, p := range []string{old, fresh} {
+		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	now := time.Now()
+	if err := os.Chtimes(old, now.Add(-8*24*time.Hour), now.Add(-8*24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if got := pruneExpiredAt(dir, now); got != 1 {
+		t.Fatalf("pruneExpiredAt removed %d, want 1 (only the 8-day-old entry)", got)
+	}
+	if _, err := os.Stat(fresh); err != nil {
+		t.Errorf("fresh entry must survive: %v", err)
+	}
+	if _, err := os.Stat(old); !os.IsNotExist(err) {
+		t.Errorf("expired entry must be gone: %v", err)
+	}
+}
+
+func TestCacheFileName(t *testing.T) {
+	for _, tc := range []struct {
+		id, version, want string
+	}{
+		{"com.example.foo", "1.0", "com.example.foo__1.0.deb"},
+		{"com.example.foo", "2.0~beta1", "com.example.foo__2.0~beta1.deb"},
+		{"com.example.foo", "1.0+dfsg-2", "com.example.foo__1.0+dfsg-2.deb"},
+		{"com.example.foo", "1:1.0-2+deb12", "com.example.foo__1_1.0-2+deb12.deb"},
+		{"com.example.foo", "", "com.example.foo.deb"},
+	} {
+		if got := cacheFileName(tc.id, tc.version); got != tc.want {
+			t.Errorf("cacheFileName(%q, %q) = %q, want %q", tc.id, tc.version, got, tc.want)
+		}
+	}
+}
+
 func TestLiveCanisterFetch(t *testing.T) {
 	if os.Getenv("XKVM_LIVE_FETCH") == "" {
 		t.Skip("set XKVM_LIVE_FETCH=1 to hit the real Canister index and repo")

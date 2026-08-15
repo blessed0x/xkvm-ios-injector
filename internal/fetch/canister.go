@@ -39,18 +39,18 @@ type canisterRepo struct {
 }
 
 // canisterLookup resolves a package id to its best free download, returning
-// the hosting repository id, the .deb path relative to that repo's root, and
-// an optional sha256. Entries are filtered to visible + free (paid packages
-// can't be sideloaded this way); among those, the latest-version entry with
-// the highest quality wins.
-func canisterLookup(ctx context.Context, client *http.Client, id string) (repoID, pkgFile, sha string, err error) {
+// the hosting repository id, the .deb path relative to that repo's root, an
+// optional sha256, and the package version (used for cache naming). Entries
+// are filtered to visible + free (paid packages can't be sideloaded this
+// way); among those, the latest-version entry with the highest quality wins.
+func canisterLookup(ctx context.Context, client *http.Client, id string) (repoID, pkgFile, sha, version string, err error) {
 	body, err := getJSON(ctx, client, canisterBase+"/package/"+id)
 	if err != nil {
-		return "", "", "", err
+		return "", "", "", "", err
 	}
 	var resp canisterPkgResp
 	if err := json.Unmarshal(body, &resp); err != nil {
-		return "", "", "", fmt.Errorf("canister: %w", err)
+		return "", "", "", "", fmt.Errorf("canister: %w", err)
 	}
 	var best *canisterPkg
 	for i := range resp.Data {
@@ -63,9 +63,9 @@ func canisterLookup(ctx context.Context, client *http.Client, id string) (repoID
 		}
 	}
 	if best == nil {
-		return "", "", "", fmt.Errorf("no free download found for %s", id)
+		return "", "", "", "", fmt.Errorf("no free download found for %s", id)
 	}
-	return best.RepositoryID, best.PackageFile, best.SHA256, nil
+	return best.RepositoryID, best.PackageFile, best.SHA256, best.Version, nil
 }
 
 // better orders two Canister entries: latest version wins, then higher

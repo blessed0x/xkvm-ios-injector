@@ -12,6 +12,7 @@ import (
 
 	"github.com/xscope0/xkvm-ios-injector/internal/app"
 	"github.com/xscope0/xkvm-ios-injector/internal/cyanfile"
+	"github.com/xscope0/xkvm-ios-injector/internal/fetch"
 	"github.com/xscope0/xkvm-ios-injector/internal/log"
 	"github.com/xscope0/xkvm-ios-injector/internal/patch"
 	"github.com/xscope0/xkvm-ios-injector/internal/tui"
@@ -153,6 +154,7 @@ to the -i input; the result is written to -o, or overwrites the input.`,
 	cmd.AddCommand(newRootlessCmd())
 	cmd.AddCommand(newRootfulCmd())
 	cmd.AddCommand(newRoothideCmd())
+	cmd.AddCommand(newCacheCmd())
 	return cmd
 }
 
@@ -583,5 +585,44 @@ Regram).`,
 	f.BoolVar(&ellekit, "ellekit", false, "bake the ElleKit runtime into the config")
 	f.StringArrayVar(&patches, "patch", nil, "bake compatibility patch name(s) into the config (repeatable)")
 	_ = cmd.MarkFlagRequired("output")
+	return cmd
+}
+
+// newCacheCmd shows or clears the persistent fetch cache — the folder where
+// the smart dependency solver keeps downloaded tweak .debs so a repeat fetch
+// is served from disk instead of the network (auto-pruned at 7 days).
+func newCacheCmd() *cobra.Command {
+	var clear bool
+	cmd := &cobra.Command{
+		Use:   "cache [--clear]",
+		Short: "show or empty the fetch cache folder",
+		Long: `cache reports where fetched tweak .debs are kept (they're reused, so you
+don't download the same tweak twice) and how much space they take. Entries
+older than 7 days are pruned automatically on the next fetch. --clear
+removes every cached .deb.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if clear {
+				n, err := fetch.ClearCache()
+				if err != nil {
+					return err
+				}
+				log.Infof("cleared %d cached .deb(s)", n)
+				return nil
+			}
+			dir, debs, bytes, err := fetch.CacheUsage()
+			if err != nil {
+				return err
+			}
+			log.Infof("cache folder: %s", dir)
+			if debs == 0 {
+				log.Infof("cache is empty")
+				return nil
+			}
+			log.Infof("%d cached .deb(s), %s", debs, fetch.HumanBytes(bytes))
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&clear, "clear", false, "remove every cached .deb")
 	return cmd
 }

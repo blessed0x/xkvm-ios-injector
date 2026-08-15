@@ -24,7 +24,7 @@ func (b *Bundle) ChangeIcon(src string) error {
 		return err
 	}
 	defer f.Close()
-	img, _, err := image.Decode(f)
+	img, err := decodeIcon(f)
 	if err != nil {
 		return fmt.Errorf("couldn't decode icon %s: %w", src, err)
 	}

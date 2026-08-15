@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/xscope0/xkvm-ios-injector/internal/log"
 )
 
 // defaultClient is used when Resolve is called without a client.
@@ -27,6 +29,10 @@ func Resolve(ctx context.Context, ids, sources []string, noRecurse bool, cacheDi
 	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
 		return nil, err
 	}
+	// Lazy 7-day TTL: drop stale cache entries before anything is resolved,
+	// so the cache never grows without bound and old versions retire on
+	// their own.
+	pruneCache(cacheDir, time.Now())
 	r := &resolver{
 		client:    client,
 		cache:     cacheDir,
@@ -68,14 +74,14 @@ func (r *resolver) walk(ctx context.Context, id string, out *[]string) error {
 	}
 	r.visited[id] = true
 
-	repo, file, depends, sha, err := r.locate(ctx, id)
+	repo, file, depends, sha, version, err := r.locate(ctx, id)
 	if err != nil {
 		return err
 	}
 	if file == "" {
 		return fmt.Errorf("no download found for %s", id)
 	}
-	path, err := r.download(ctx, id, repo, file, sha)
+	path, err := r.download(ctx, id, repo, file, sha, version)
 	if err != nil {
 		return err
 	}
@@ -109,38 +115,60 @@ func (r *resolver) walk(ctx context.Context, id string, out *[]string) error {
 
 // locate finds where id lives. Explicit sources are checked first (a direct
 // Packages-index match); otherwise Canister resolves the hosting repo and the
-// repo's index is fetched. It returns the repo base URI, the relative .deb
-// path, the Depends: closure (used for recursion), and an optional sha256.
-func (r *resolver) locate(ctx context.Context, id string) (repo, file, depends, sha string, err error) {
+// repo's index is fetched; a package neither knows about triggers the smart
+// fallback sweep over the built-in default repo list (the active-repos set,
+// repos.go). It returns the repo base URI, the relative .deb path, the
+// Depends: closure (used for recursion), an optional sha256, and the
+// package version (used for cache naming).
+func (r *resolver) locate(ctx context.Context, id string) (repo, file, depends, sha, version string, err error) {
 	for _, src := range r.sources {
 		entries, ierr := r.indexFor(ctx, src)
 		if ierr != nil {
 			continue // a listed repo that's down doesn't block the others
 		}
 		if e := findEntry(entries, id); e != nil {
-			return strings.TrimSuffix(src, "/"), e.Filename, e.Depends, e.SHA256, nil
+			return strings.TrimSuffix(src, "/"), e.Filename, e.Depends, e.SHA256, e.Version, nil
 		}
 	}
 
-	repoID, pkgFile, pkgSHA, cerr := canisterLookup(ctx, r.client, id)
+	repoID, pkgFile, pkgSHA, pkgVer, cerr := canisterLookup(ctx, r.client, id)
 	if cerr != nil {
-		return "", "", "", "", fmt.Errorf("couldn't locate %s: %w", id, cerr)
+		// Smart dependency fallback: sweep the default repo list for a
+		// Packages-index hit. Repos already consulted this run are skipped
+		// via the shared index cache; a down repo just moves the sweep on.
+		// The whole sweep shares one deadline (fallbackSweepTimeout) so a
+		// dead id can't stall the resolve on a wall of hanging indexes.
+		sweepCtx, cancel := context.WithTimeout(ctx, fallbackSweepTimeout)
+		defer cancel()
+		for _, repo := range defaultRepos {
+			if _, done := r.indexes[repo]; done {
+				continue
+			}
+			entries, ierr := r.indexFor(sweepCtx, repo)
+			if ierr != nil {
+				continue
+			}
+			if e := findEntry(entries, id); e != nil {
+				return strings.TrimSuffix(repo, "/"), e.Filename, e.Depends, e.SHA256, e.Version, nil
+			}
+		}
+		return "", "", "", "", "", fmt.Errorf("couldn't locate %s: %w", id, cerr)
 	}
 	uri, uerr := canisterRepoURI(ctx, r.client, repoID)
 	if uerr != nil {
-		return "", "", "", "", uerr
+		return "", "", "", "", "", uerr
 	}
 	// The repo index is authoritative for Depends and Filename when
 	// present; fall back to the Canister-reported path otherwise.
 	if entries, ierr := r.indexFor(ctx, uri); ierr == nil {
 		if e := findEntry(entries, id); e != nil {
 			if e.Filename != "" {
-				return uri, e.Filename, e.Depends, e.SHA256, nil
+				return uri, e.Filename, e.Depends, e.SHA256, e.Version, nil
 			}
-			return uri, pkgFile, e.Depends, firstNonEmpty(e.SHA256, pkgSHA), nil
+			return uri, pkgFile, e.Depends, firstNonEmpty(e.SHA256, pkgSHA), firstNonEmpty(e.Version, pkgVer), nil
 		}
 	}
-	return uri, pkgFile, "", pkgSHA, nil
+	return uri, pkgFile, "", pkgSHA, pkgVer, nil
 }
 
 func (r *resolver) indexFor(ctx context.Context, repo string) ([]Entry, error) {
@@ -155,12 +183,24 @@ func (r *resolver) indexFor(ctx context.Context, repo string) ([]Entry, error) {
 	return entries, nil
 }
 
-// download fetches repo/file into the cache as <id>.deb, verifying the
-// sha256 when one is available.
-func (r *resolver) download(ctx context.Context, id, repo, file, sha string) (string, error) {
+// download fetches repo/file into the cache as a versioned <id>__<ver>.deb,
+// verifying the sha256 when one is available. A cached copy of the exact
+// version whose sha checks out is reused instead of downloading again — the
+// smart-dependency cache: the same dependency needed twice is served from
+// disk the second time (and on any later run inside the 7-day TTL).
+func (r *resolver) download(ctx context.Context, id, repo, file, sha, version string) (string, error) {
 	if !validPackageID(id) {
 		return "", fmt.Errorf("refusing unsafe package id %q", id)
 	}
+	path := filepath.Join(r.cache, cacheFileName(id, version))
+	if data, err := os.ReadFile(path); err == nil {
+		if sha == "" || hex.EncodeToString(sha256sum(data)) == sha {
+			log.Infof("using cached %s", path)
+			return path, nil
+		}
+		log.Infof("cache miss (sha changed): re-downloading %s", id)
+	}
+
 	url := strings.TrimSuffix(repo, "/") + "/" + file
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -179,16 +219,19 @@ func (r *resolver) download(ctx context.Context, id, repo, file, sha string) (st
 		return "", err
 	}
 	if sha != "" {
-		sum := sha256.Sum256(body)
-		if hex.EncodeToString(sum[:]) != sha {
+		if hex.EncodeToString(sha256sum(body)) != sha {
 			return "", fmt.Errorf("sha256 mismatch for %s", id)
 		}
 	}
-	path := filepath.Join(r.cache, id+".deb")
 	if err := os.WriteFile(path, body, 0o644); err != nil {
 		return "", err
 	}
 	return path, nil
+}
+
+func sha256sum(b []byte) []byte {
+	sum := sha256.Sum256(b)
+	return sum[:]
 }
 
 func firstNonEmpty(a, b string) string {

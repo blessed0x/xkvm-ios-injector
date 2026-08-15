@@ -101,7 +101,15 @@ func Run(ctx context.Context, opts *Options) error {
 	// --no-recurse skips the dependency closure.
 	if len(opts.Fetch) > 0 {
 		log.Infof("fetching %d tweak(s) via Canister/MobileAPT", len(opts.Fetch))
-		fetched, err := fetch.Resolve(ctx, opts.Fetch, opts.APTSource, opts.NoRecurse, filepath.Join(tmpdir, "fetch"), nil)
+		// The smart-dependency cache is persistent (~/.cache/xkvm/fetch,
+		// 7-day TTL): a dependency fetched once is reused instead of
+		// downloaded again. Fall back to a scratch dir if the cache dir
+		// can't be determined.
+		cacheDir := filepath.Join(tmpdir, "fetch")
+		if cd, cerr := fetch.CacheDir(); cerr == nil {
+			cacheDir = cd
+		}
+		fetched, err := fetch.Resolve(ctx, opts.Fetch, opts.APTSource, opts.NoRecurse, cacheDir, nil)
 		if err != nil {
 			return err
 		}

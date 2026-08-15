@@ -226,7 +226,14 @@ func extractEntry(f *zip.File, dest string) error {
 			log.Warnf("skipping symlink escaping archive root: %s", f.Name)
 			return nil
 		}
-		return os.Symlink(tgt, target)
+		// Symlink creation can fail on Windows (needs developer mode or an
+		// admin token). Degrade to a warning rather than aborting the whole
+		// extraction: the archive's file entries are still written, and
+		// Repack dereferences whatever links actually materialized.
+		if err := os.Symlink(tgt, target); err != nil {
+			log.Warnf("skipping symlink (cannot create on this OS): %s -> %s", f.Name, tgt)
+		}
+		return nil
 	}
 
 	rc, err := f.Open()

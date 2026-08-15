@@ -33,12 +33,12 @@ func TestCanisterLookupPrefersLatestFree(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	repo, file, sha, err := canisterLookup(context.Background(), srv.Client(), "ws.hbang.alderis")
+	repo, file, sha, version, err := canisterLookup(context.Background(), srv.Client(), "ws.hbang.alderis")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if repo != "havoc" || file != "debs/new.deb" || sha != "bbb" {
-		t.Fatalf("got repo=%q file=%q sha=%q, want the havoc/latest entry", repo, file, sha)
+	if repo != "havoc" || file != "debs/new.deb" || sha != "bbb" || version != "1.3.0" {
+		t.Fatalf("got repo=%q file=%q sha=%q version=%q, want the havoc/latest entry", repo, file, sha, version)
 	}
 }
 
@@ -50,7 +50,7 @@ func TestCanisterLookupSkipsPaidAndHidden(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if _, _, _, err := canisterLookup(context.Background(), srv.Client(), "x"); err == nil {
+	if _, _, _, _, err := canisterLookup(context.Background(), srv.Client(), "x"); err == nil {
 		t.Fatal("want an error when only paid/hidden entries exist")
 	}
 }
@@ -77,7 +77,7 @@ func TestCanisterRepoURI(t *testing.T) {
 func TestCanisterLookupHTTPError(t *testing.T) {
 	srv := canisterStub(t, http.NotFoundHandler())
 	defer srv.Close()
-	if _, _, _, err := canisterLookup(context.Background(), srv.Client(), "x"); err == nil {
+	if _, _, _, _, err := canisterLookup(context.Background(), srv.Client(), "x"); err == nil {
 		t.Fatal("want an error on 404")
 	}
 }

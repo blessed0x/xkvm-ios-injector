@@ -23,7 +23,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-14, ubuntu-latest]
+        # The cross-platform claim is CI-pinned: linux and windows run the
+        # pure-Go suites (fetch/TUI/ipa/deb/rootless goldens) — the
+        # Mach-O-toolchain tests skip themselves everywhere via
+        # testutil.SkipUnlessNativeToolchain / skipNoToolchain. macos-14
+        # additionally runs those native goldens and the smoke scripts.
+        os: [macos-14, ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
@@ -34,6 +39,12 @@ jobs:
         run: go vet ./...
       - name: Build
         run: go build ./...
+      # The deb Build/Unpack round trip deliberately skips its symlink
+      # assertion on Windows (no developer mode on the runner), so the
+      # verbose re-run makes the actual skip visible instead of silent.
+      - name: Deb round-trip (verbose, windows skip-proof)
+        if: matrix.os == 'windows-latest'
+        run: go test -race -v ./internal/deb/ -run TestBuildUnpackRoundTrip
       - name: Test
         run: go test -race ./...
       # The macos-14/arm64 leg runs the native-toolchain-gated golden tests

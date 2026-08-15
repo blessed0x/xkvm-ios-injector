@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/xscope0/xkvm-ios-injector/internal/app"
+	"github.com/xscope0/xkvm-ios-injector/internal/cyanfile"
 	"github.com/xscope0/xkvm-ios-injector/internal/deb"
 )
 
@@ -49,7 +50,9 @@ func TestTUIAboutScreen(t *testing.T) {
 
 func TestTUIMenuDispatchInjects(t *testing.T) {
 	var got *app.Options
-	out := runUI(t, "1\napp.ipa\nTweak.dylib\n\nn\nq\n", func(_ context.Context, opts *app.Options) error {
+	// identity, patch, ellekit, root-dylib all answered "n" (the file is a
+	// .dylib so the root-dylib question is asked), then quit.
+	out := runUI(t, "1\napp.ipa\nTweak.dylib\n\nn\nn\nn\nn\nq\n", func(_ context.Context, opts *app.Options) error {
 		got = opts
 		return nil
 	})
@@ -65,6 +68,15 @@ func TestTUIMenuDispatchInjects(t *testing.T) {
 	if got.Patch {
 		t.Errorf("patch should stay off when the user declines, got %+v", got)
 	}
+	if got.ElleKit {
+		t.Errorf("ellekit should stay off when the user declines, got %+v", got)
+	}
+	if len(got.RootDylibs) != 0 {
+		t.Errorf("root-dylibs should stay empty when the user declines, got %+v", got)
+	}
+	if got.BundleID != "" || got.Name != "" || got.Icon != "" {
+		t.Errorf("identity edits should stay empty when the user declines, got %+v", got)
+	}
 	if !strings.Contains(out, "your tweaked app is ready!") {
 		t.Errorf("success line missing; output:\n%s", out)
 	}
@@ -76,10 +88,11 @@ func TestTUIMenuDispatchExtractAndCheck(t *testing.T) {
 		calls = append(calls, "run")
 		return nil
 	}
-	out := runUI(t, "2\napp.ipa\n\n5\napp.ipa\nq\n", run)
-	// extract + check use the real app package funcs, not u.Run — so Run is
-	// never called; the calls are captured via the app package instead. Here
-	// we only assert the flows render their prompts without crashing.
+	out := runUI(t, "2\n1\napp.ipa\n\n5\napp.ipa\nq\n", run)
+	// extract (option 1 = from an app) + check use the real app package funcs,
+	// not u.Run — so Run is never called; the calls are captured via the app
+	// package instead. Here we only assert the flows render their prompts
+	// without crashing.
 	for _, want := range []string{"which app should I look inside?", "which app should I check?"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("prompt missing %q; output:\n%s", want, out)
@@ -89,7 +102,7 @@ func TestTUIMenuDispatchExtractAndCheck(t *testing.T) {
 }
 
 func TestTUIErrorShown(t *testing.T) {
-	out := runUI(t, "1\napp.ipa\nTweak.dylib\n\nn\nq\n", func(_ context.Context, _ *app.Options) error {
+	out := runUI(t, "1\napp.ipa\nTweak.dylib\n\nn\nn\nn\nn\nq\n", func(_ context.Context, _ *app.Options) error {
 		return errors.New("boom: no such file")
 	})
 	for _, want := range []string{"that didn't work", "boom: no such file"} {
@@ -114,7 +127,7 @@ func TestTUIEOFEndsGracefully(t *testing.T) {
 
 func TestTUIBadChoiceThenQuit(t *testing.T) {
 	out := runUI(t, "99\nq\n", nil)
-	if !strings.Contains(out, "try a number from the list!") {
+	if !strings.Contains(out, "try a number from the list") {
 		t.Errorf("bad-choice message missing; output:\n%s", out)
 	}
 	if !strings.Contains(out, "bye!") {
@@ -142,8 +155,9 @@ func TestTUIConvertFlowRootlessRealDeb(t *testing.T) {
 	out := filepath.Join(tmp, "shadow-rootless.deb")
 
 	// Menu 3 (convert) -> option 1 (rootful .deb to rootless) -> the real
-	// fixture -> the output path -> quit.
-	input := "3\n1\n" + fixture + "\n" + out + "\nq\n"
+	// fixture -> the output path -> the two new option prompts left at their
+	// defaults (thin: no, tweakinject: no) -> quit.
+	input := "3\n1\n" + fixture + "\n" + out + "\n\n\nq\n"
 	uiOut := runUI(t, input, nil)
 
 	// The flow must report success and actually produce the .deb.
@@ -176,6 +190,65 @@ func TestTUIConvertFlowRootlessRealDeb(t *testing.T) {
 		if !strings.Contains(string(ctl), want) {
 			t.Errorf("converted control missing %q:\n%s", want, ctl)
 		}
+	}
+}
+
+// TestTUIConvertFlowRootlessTweakInjectRealDeb drives the new tweakinject
+// option prompt (menu 3 -> option 1, answering yes) against the real Shadow
+// fixture: the converted package must land under the modern TweakInject
+// layout (var/jb/usr/lib/TweakInject) instead of the legacy DynamicLibraries
+// path — proving the prompt actually reaches app.Rootless.
+func TestTUIConvertFlowRootlessTweakInjectRealDeb(t *testing.T) {
+	tmp := t.TempDir()
+	fixture, err := filepath.Abs(goldenShadowDeb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(fixture); err != nil {
+		t.Fatalf("golden fixture missing at %s: %v", fixture, err)
+	}
+	out := filepath.Join(tmp, "shadow-ti.deb")
+
+	// thin: no (empty), tweakinject: yes.
+	uiOut := runUI(t, "3\n1\n"+fixture+"\n"+out+"\n\ny\nq\n", nil)
+	if !strings.Contains(uiOut, "rootless .deb ready") {
+		t.Errorf("success line missing; output:\n%s", uiOut)
+	}
+	unpacked := filepath.Join(tmp, "unpacked")
+	if err := deb.Unpack(out, unpacked); err != nil {
+		t.Fatalf("Unpack converted deb: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(unpacked, "var", "jb", "usr", "lib", "TweakInject", "Shadow.dylib")); err != nil {
+		t.Errorf("TweakInject layout payload missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(unpacked, "var", "jb", "Library", "MobileSubstrate", "DynamicLibraries")); !os.IsNotExist(err) {
+		t.Errorf("legacy DynamicLibraries layout should be gone in TweakInject mode (stat err=%v)", err)
+	}
+}
+
+// TestTUIConvertFlowRoothideRealDeb drives the roothide convert flow with its
+// two new option prompts (pkgmirror left off, mode left at auto) against a
+// real rootless deb prepared with the real app.Rootless: the menu must report
+// success and land a real .deb.
+func TestTUIConvertFlowRoothideRealDeb(t *testing.T) {
+	tmp := t.TempDir()
+	fixture, err := filepath.Abs(goldenShadowDeb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootlessDeb := filepath.Join(tmp, "shadow-rootless.deb")
+	if err := app.Rootless(fixture, rootlessDeb, false, false); err != nil {
+		t.Fatalf("preparing rootless input: %v", err)
+	}
+	out := filepath.Join(tmp, "shadow-roothide.deb")
+
+	// pkgmirror: no (empty), mode: auto (empty).
+	uiOut := runUI(t, "3\n2\n"+rootlessDeb+"\n"+out+"\n\n\nq\n", nil)
+	if !strings.Contains(uiOut, "roothide .deb ready") {
+		t.Errorf("success line missing; output:\n%s", uiOut)
+	}
+	if _, err := os.Stat(out); err != nil {
+		t.Fatalf("roothide .deb not written to the prompted path %s: %v\noutput:\n%s", out, err, uiOut)
 	}
 }
 
@@ -246,5 +319,200 @@ func TestTUIConvertFlowXinaAndRootfulRealDeb(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(unpacked2, "Library", "MobileSubstrate", "DynamicLibraries", "Shadow.dylib")); err != nil {
 		t.Errorf("rootful payload missing at package root: %v", err)
+	}
+}
+
+// TestTUIEmptyPathTwiceReturnsToMenu pins the empty-input escalation: the
+// first empty answer to a required path gets a nudge, the second one in a row
+// sends the user back to the main menu (where q then quits cleanly).
+func TestTUIEmptyPathTwiceReturnsToMenu(t *testing.T) {
+	out := runUI(t, "1\n\n\nq\n", nil)
+	for _, want := range []string{
+		"that needs a path", // first empty → nudge
+		"back to the menu",  // second empty → cancel out of the flow
+		"bye!",              // q from the main menu → clean quit
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("empty-input escalation missing %q; output:\n%s", want, out)
+		}
+	}
+}
+
+// TestTUIQuitWordCancelsFlow pins that typing q (or back/cancel) at any
+// path question bails out of the flow to the main menu, so users who don't
+// know the menu loop can always escape.
+func TestTUIQuitWordCancelsFlow(t *testing.T) {
+	out := runUI(t, "1\nq\nq\n", nil)
+	for _, want := range []string{"ok, back to the menu.", "bye!"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("cancel-in-flow missing %q; output:\n%s", want, out)
+		}
+	}
+}
+
+// TestTUIUndebFlowRealDeb drives menu 2 option 2 (extract from a .deb) against
+// the real Shadow fixture deb and asserts the extracted artifacts land in the
+// prompted folder, exactly like the CLI's 'xkvm undeb'.
+func TestTUIUndebFlowRealDeb(t *testing.T) {
+	tmp := t.TempDir()
+	fixture, err := filepath.Abs(goldenShadowDeb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outDir := filepath.Join(tmp, "out")
+	uiOut := runUI(t, "2\n2\n"+fixture+"\n"+outDir+"\nq\n", nil)
+	if !strings.Contains(uiOut, "tweaks extracted to") {
+		t.Errorf("success line missing; output:\n%s", uiOut)
+	}
+	for _, want := range []string{
+		filepath.Join(outDir, "Shadow.dylib"),
+		filepath.Join(outDir, "ShadowSettings.bundle"),
+	} {
+		if _, err := os.Stat(want); err != nil {
+			t.Errorf("undeb flow missing %s: %v\noutput:\n%s", filepath.Base(want), err, uiOut)
+		}
+	}
+}
+
+// TestTUICyanCheckFlowRealGenerated drives menu 4 option 3 (check a .cyan
+// recipe) against a real recipe generated from the Shadow fixture, and asserts
+// the flow reports the recipe is safe to apply.
+func TestTUICyanCheckFlowRealGenerated(t *testing.T) {
+	tmp := t.TempDir()
+	fixture, err := filepath.Abs(goldenShadowDeb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exDir := filepath.Join(tmp, "ex")
+	if err := app.Undeb(fixture, exDir); err != nil {
+		t.Fatalf("preparing fixture dylib: %v", err)
+	}
+	cyan := filepath.Join(tmp, "recipe.cyan")
+	if err := cyanfile.Generate(cyanfile.GenerateOptions{
+		Output: cyan,
+		Files:  []string{filepath.Join(exDir, "Shadow.dylib")},
+	}); err != nil {
+		t.Fatalf("generating recipe: %v", err)
+	}
+	uiOut := runUI(t, "4\n3\n"+cyan+"\nq\n", nil)
+	if !strings.Contains(uiOut, "that .cyan checks out") {
+		t.Errorf("cyan-check success line missing; output:\n%s", uiOut)
+	}
+	if strings.Contains(uiOut, "[fail]") {
+		t.Errorf("cyan-check reported failure on a clean recipe; output:\n%s", uiOut)
+	}
+}
+
+// TestTUIFetchFlow drives menu 8 with a stubbed resolver and Run: the bundle
+// id, repo source, and dependency choice reach the resolver, and the fetched
+// file lands in the injection set.
+// id is collected, the stub resolves it to a .deb, the flow reports the
+// download, and the follow-up "inject now?" chains into the shared inject
+// runner with the fetched file. Hermetic — no network.
+func TestTUIFetchFlow(t *testing.T) {
+	// Bundle id, then the new prompts: a repo source (wired to the resolver
+	// as --apt-source), dependencies answered no (wired as --no-recurse), the
+	// download folder, then straight into the shared inject flow.
+	u := NewForTest(strings.NewReader(
+		"8\ncom.example.tweak\nhttps://repo.chariz.com\nn\n/tmp/fetched\ny\napp.ipa\n/tmp/out.ipa\nn\nn\ny\nq\n"), &bytes.Buffer{})
+	var gotIDs, gotFiles []string
+	var gotSources []string
+	gotNoRecurse := false
+	u.Fetch = func(_ context.Context, ids, sources []string, noRecurse bool, _ string) ([]string, error) {
+		gotIDs = ids
+		gotSources = sources
+		gotNoRecurse = noRecurse
+		return []string{"/tmp/fetched/com.example.tweak.deb"}, nil
+	}
+	u.Run = func(_ context.Context, opts *app.Options) error {
+		gotFiles = append(gotFiles, opts.Files...)
+		return nil
+	}
+	u.Start()
+	out := u.Out.(*bytes.Buffer).String()
+
+	if len(gotIDs) != 1 || gotIDs[0] != "com.example.tweak" {
+		t.Errorf("bundle id not wired to the resolver: %v", gotIDs)
+	}
+	if len(gotSources) != 1 || gotSources[0] != "https://repo.chariz.com" {
+		t.Errorf("repo source prompt not wired to the resolver: %v", gotSources)
+	}
+	if !gotNoRecurse {
+		t.Error("dependencies=no must reach the resolver as noRecurse")
+	}
+	if len(gotFiles) != 1 || gotFiles[0] != "/tmp/fetched/com.example.tweak.deb" {
+		t.Errorf("fetched file not wired into the injection set: %v", gotFiles)
+	}
+	for _, want := range []string{"fetched 1 .deb(s)", "your tweaked app is ready!"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("fetch flow missing %q; output:\n%s", want, out)
+		}
+	}
+}
+
+// TestTUICacheFlowEmpty drives menu 9 with an empty cache: it reports the
+// folder and the emptiness, and never asks to clear anything.
+func TestTUICacheFlowEmpty(t *testing.T) {
+	u := NewForTest(strings.NewReader("9\nq\n"), &bytes.Buffer{})
+	u.CacheUsage = func() (string, int, int64, error) {
+		return "/tmp/fake-cache", 0, 0, nil
+	}
+	u.Start()
+	out := u.Out.(*bytes.Buffer).String()
+	for _, want := range []string{"cache folder: /tmp/fake-cache", "it's empty right now"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("empty-cache flow missing %q; output:\n%s", want, out)
+		}
+	}
+}
+
+// TestTUICacheFlowClear drives menu 9 with a populated cache and answers
+// "clear the whole cache": the injected CacheClear is called and the flow
+// reports the removal count.
+func TestTUICacheFlowClear(t *testing.T) {
+	u := NewForTest(strings.NewReader("9\n2\nq\n"), &bytes.Buffer{})
+	u.CacheUsage = func() (string, int, int64, error) {
+		return "/tmp/fake-cache", 3, 4_500_000, nil
+	}
+	cleared := 0
+	u.CacheClear = func() (int, error) {
+		cleared = 3
+		return 3, nil
+	}
+	u.Start()
+	out := u.Out.(*bytes.Buffer).String()
+	if cleared != 3 {
+		t.Errorf("CacheClear not invoked from the menu (cleared=%d)", cleared)
+	}
+	for _, want := range []string{"3 cached tweak(s), 4.3 MB", "cache cleared", "removed 3 cached .deb(s)"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("cache-clear flow missing %q; output:\n%s", want, out)
+		}
+	}
+}
+
+// TestTUIInjectEditsIdentity drives menu 1 answering yes to the identity
+// question and filling in a bundle id, display name, and icon, and asserts
+// all three land on the options handed to Run.
+func TestTUIInjectEditsIdentity(t *testing.T) {
+	var got *app.Options
+	out := runUI(t, "1\napp.ipa\nTweak.dylib\n/tmp/out.ipa\ny\ncom.new.id\nMy App\n/tmp/newicon.png\nn\nn\nn\nq\n", func(_ context.Context, opts *app.Options) error {
+		got = opts
+		return nil
+	})
+	if got == nil {
+		t.Fatal("Run was never called; output:\n" + out)
+	}
+	if got.BundleID != "com.new.id" {
+		t.Errorf("bundle id not wired from prompt, got %q", got.BundleID)
+	}
+	if got.Name != "My App" {
+		t.Errorf("display name not wired from prompt, got %q", got.Name)
+	}
+	if got.Icon != "/tmp/newicon.png" {
+		t.Errorf("icon not wired from prompt, got %q", got.Icon)
+	}
+	if !strings.Contains(out, "your tweaked app is ready!") {
+		t.Errorf("success line missing; output:\n%s", out)
 	}
 }
