@@ -520,6 +520,66 @@ func TestPruneExpiredAt(t *testing.T) {
 	}
 }
 
+// TestResolveDoesNotPruneCustomDir pins the prune scope: a caller-supplied
+// cache dir (the TUI's download destination) is the user's own folder, so
+// an old .deb in it must survive a Resolve — only the standard persistent
+// cache gets the 7-day TTL sweep.
+func TestResolveDoesNotPruneCustomDir(t *testing.T) {
+	rs := &repoServer{
+		entries: map[string]string{"com.example.alpha": ""},
+		files:   map[string][]byte{"debs/com.example.alpha.deb": []byte("alpha-deb")},
+	}
+	srv := httptest.NewServer(rs.handler())
+	defer srv.Close()
+
+	dir := t.TempDir()
+	stale := filepath.Join(dir, "com.example.old__1.0.deb")
+	if err := os.WriteFile(stale, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-8 * 24 * time.Hour)
+	if err := os.Chtimes(stale, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Resolve(t.Context(), []string{"com.example.alpha"}, []string{srv.URL}, true, dir, srv.Client()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(stale); err != nil {
+		t.Errorf("custom-dir .deb older than the TTL must survive Resolve (it is the user's folder, not the cache): %v", err)
+	}
+}
+
+// TestIsDefaultCacheDir pins the prune-scope gate: only the standard
+// persistent cache directory qualifies for the automatic 7-day sweep.
+func TestIsDefaultCacheDir(t *testing.T) {
+	def, err := CacheDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !isDefaultCacheDir(def) {
+		t.Error("CacheDir() must be recognized as the default cache dir")
+	}
+	if isDefaultCacheDir(t.TempDir()) {
+		t.Error("a temp/custom dir must not be treated as the default cache")
+	}
+}
+
+// TestHumanBytesClampsAtTB pins the unit clamp: absurdly large inputs format
+// without panicking (the old "KMGT"[exp] lookup went out of range at 1 PiB).
+func TestHumanBytesClampsAtTB(t *testing.T) {
+	if got := HumanBytes(1024 * 1024 * 1024); got != "1.0 GB" {
+		t.Errorf("HumanBytes(1GiB) = %q, want 1.0 GB", got)
+	}
+	if got := HumanBytes(4_500_000); got != "4.3 MB" {
+		t.Errorf("HumanBytes(4.5MB) = %q, want 4.3 MB", got)
+	}
+	big := int64(1) << 50 // 1 PiB — would panic before the clamp
+	if got := HumanBytes(big); got != "1024.0 TB" {
+		t.Errorf("HumanBytes(1PiB) = %q, want 1024.0 TB (no panic)", got)
+	}
+}
+
 func TestCacheFileName(t *testing.T) {
 	for _, tc := range []struct {
 		id, version, want string

@@ -291,15 +291,16 @@ func clearCacheDir(dir string) int {
 	return removed
 }
 
-// HumanBytes renders a byte count readably (B / KB / MB / GB, one decimal).
-// Shared by `xkvm cache` and the TUI cache menu.
+// HumanBytes renders a byte count readably (B / KB / MB / GB / TB, one
+// decimal), Shared by `xkvm cache` and the TUI cache menu. Units clamp at
+// TB: anything larger still formats (no panic on absurd input).
 func HumanBytes(n int64) string {
 	const unit = 1024
 	if n < unit {
 		return fmt.Sprintf("%d B", n)
 	}
 	div, exp := int64(unit), 0
-	for m := n / unit; m >= unit; m /= unit {
+	for m := n / unit; m >= unit && exp < 3; m /= unit {
 		div *= unit
 		exp++
 	}

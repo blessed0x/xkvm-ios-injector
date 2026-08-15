@@ -29,10 +29,14 @@ func Resolve(ctx context.Context, ids, sources []string, noRecurse bool, cacheDi
 	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
 		return nil, err
 	}
-	// Lazy 7-day TTL: drop stale cache entries before anything is resolved,
-	// so the cache never grows without bound and old versions retire on
-	// their own.
-	pruneCache(cacheDir, time.Now())
+	// Lazy 7-day TTL: drop stale entries before anything is resolved, so the
+	// cache never grows without bound and old versions retire on their own.
+	// Only the standard persistent cache is pruned — a caller-supplied
+	// folder (the TUI's download destination) is the user's own files, and
+	// silently deleting them on a later run would be a surprise.
+	if isDefaultCacheDir(cacheDir) {
+		pruneCache(cacheDir, time.Now())
+	}
 	r := &resolver{
 		client:    client,
 		cache:     cacheDir,
@@ -239,6 +243,17 @@ func firstNonEmpty(a, b string) string {
 		return a
 	}
 	return b
+}
+
+// isDefaultCacheDir reports whether dir is the standard persistent cache
+// directory (CacheDir). Custom cache dirs are treated as user-owned folders
+// and exempt from the automatic 7-day prune.
+func isDefaultCacheDir(dir string) bool {
+	def, err := CacheDir()
+	if err != nil {
+		return false
+	}
+	return filepath.Clean(dir) == filepath.Clean(def)
 }
 
 // validPackageID reports whether id is safe to use as a cache file name.
