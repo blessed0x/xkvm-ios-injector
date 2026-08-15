@@ -109,14 +109,36 @@ func TestRootDecryptSpaceSeparatedForm(t *testing.T) {
 	}
 }
 
-func TestRootRequiresInput(t *testing.T) {
+// TestRootBareOpensTUI pins the friendly default: a bare `xkvm` (no flags,
+// no subcommand) launches the menu via the tuiStarter instead of failing
+// with "input not set". This is how a new user first meets xkvm.
+func TestRootBareOpensTUI(t *testing.T) {
+	var started bool
+	cmd := NewRootCmd(func(_ context.Context, _ *app.Options) error { return nil }, func() { started = true })
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs(nil)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("bare xkvm should start the TUI, got error: %v", err)
+	}
+	if !started {
+		t.Error("TUI starter was never called for bare xkvm")
+	}
+}
+
+// TestRootFlagsWithoutInputStillErrors: flags were given but no -i — that
+// stays an error. The user clearly meant the flag path, not the menu.
+func TestRootFlagsWithoutInputStillErrors(t *testing.T) {
 	cmd := NewRootCmd(func(_ context.Context, _ *app.Options) error { return nil }, nil)
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--silent"})
 
 	if err := cmd.Execute(); err == nil {
-		t.Fatal("expected an error for missing required -i")
+		t.Fatal("expected an error for flags given without -i")
 	}
 }
 
@@ -410,6 +432,48 @@ func TestCheckCmdExitCodes(t *testing.T) {
 	cmd2.SetArgs([]string{"check", "-i", appDir})
 	if err := cmd2.Execute(); err != nil {
 		t.Errorf("check should pass once the framework is shipped: %v", err)
+	}
+}
+
+// TestCheckCmdFixEndToEnd drives `check --fix` through the real command: a
+// broken app (tier-1 @rpath gap) gets its missing framework located in a
+// --fix-dir and the fixed copy written to -o. Native-toolchain gated.
+func TestCheckCmdFixEndToEnd(t *testing.T) {
+	testutil.SkipUnlessNativeToolchain(t)
+	log.SetSilent(true)
+	t.Cleanup(func() { log.SetSilent(false) })
+	tmp := t.TempDir()
+
+	appDir := testutil.MakeApp(t, tmp, "TestApp", "com.example.test")
+	if err := os.MkdirAll(filepath.Join(appDir, "Frameworks"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tweak := testutil.MakeTweak(t, tmp, "CoolTweak")
+	if err := (macho.Bin{Path: tweak}).InjectWeak("@rpath/MissingMedia.framework/MissingMedia"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(tweak, filepath.Join(appDir, "Frameworks", "CoolTweak.dylib")); err != nil {
+		t.Fatal(err)
+	}
+
+	fixDir := filepath.Join(tmp, "fixes")
+	fwDir := filepath.Join(fixDir, "MissingMedia.framework")
+	if err := os.MkdirAll(fwDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fwBin := testutil.MakeTweak(t, tmp, "MissingMedia")
+	if err := os.Rename(fwBin, filepath.Join(fwDir, "MissingMedia")); err != nil {
+		t.Fatal(err)
+	}
+
+	out := filepath.Join(tmp, "TestApp-fixed.app")
+	cmd := NewRootCmd(func(_ context.Context, _ *app.Options) error { return nil }, nil)
+	cmd.SetArgs([]string{"check", "-i", appDir, "--fix", "-o", out, "--fix-dir", fixDir, "--yes"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("check --fix should succeed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(out, "Frameworks", "MissingMedia.framework", "MissingMedia")); err != nil {
+		t.Errorf("fixed output missing the resolved framework: %v", err)
 	}
 }
 

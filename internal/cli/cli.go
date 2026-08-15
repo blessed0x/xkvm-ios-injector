@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -57,8 +58,8 @@ and it puts the tweak inside, re-signs the result, and repacks it. It can
 also pull tweaks back out of an app, and convert tweak packages between
 the formats different jailbreaks use.
 
-Not sure where to start? Run 'xkvm tui' for a menu that asks one question
-at a time. Or use the command line:
+Not sure where to start? Run 'xkvm' (or 'xkvm tui') for a menu that
+asks one question at a time. Or use the command line:
 
   xkvm -i App.ipa -f MyTweak.dylib -o App-Tweaked.ipa   inject a tweak
   xkvm extract -i App.ipa -o tweaks/                   pull tweaks out
@@ -92,6 +93,18 @@ to the -i input; the result is written to -o, or overwrites the input.`,
 					// as a positional arg, then fails here with a confusing
 					// "input not set". Point at the real fix: reinstall.
 					return fmt.Errorf("required flag(s) \"input\" not set\n\n  did you mean a subcommand? %q isn't one. if you recently installed xkvm,\n  your copy may be out of date; reinstall with:\n\n    go install github.com/xscope0/xkvm-ios-injector/cmd/xkvm@main\n\n  then run 'xkvm --help' to see the current commands", args[0])
+				}
+				if cmd.Flags().NFlag() == 0 {
+					// Bare `xkvm`: no input, no flags, no subcommand — open the
+					// friendly menu instead of failing with "input not set".
+					// A new user meeting xkvm for the first time should land in
+					// the menu, not on a flag error.
+					start := tuiStarter
+					if start == nil {
+						start = tui.New().Start
+					}
+					start()
+					return nil
 				}
 				return fmt.Errorf("required flag(s) \"input\" not set")
 			}
@@ -222,10 +235,19 @@ shows the equivalent command, so it doubles as a reference.`,
 // load-command dependency in an app/ipa resolves inside the bundle. Catches
 // the ffmpegkit-class gap — a tweak referencing @rpath/X.framework that the
 // app doesn't ship. Exit code 1 when any reference is unresolved.
+//
+// --fix turns the report into an auto-resolver: missing artifacts are located
+// (--fix-dir collections, .debs inside them, the fetch cache, then the repos
+// unless --no-fetch) and a fixed copy is written to -o.
 func newCheckCmd() *cobra.Command {
-	var input string
+	var (
+		input, output string
+		fix           bool
+		fixDirs       []string
+		yes, noFetch  bool
+	)
 	cmd := &cobra.Command{
-		Use:   "check -i <app|ipa|tipa>",
+		Use:   "check -i <app|ipa|tipa> [--fix -o <out>]",
 		Short: "verify bundle-relative dependencies resolve (merge-completeness check)",
 		Long: `check scans every Mach-O in an app/ipa/tipa for two classes of
 unresolved bundle-relative reference:
@@ -237,16 +259,53 @@ unresolved bundle-relative reference:
 Frameworks in Frameworks/ and at the app root are reachable from any binary;
 a framework nested inside a .bundle is reachable only from binaries of the
 same tweak family. System frameworks and paths are ignored; dlopen findings
-are reported as suspected. Exit code is 1 when any reference is unresolved.`,
+are reported as suspected. Exit code is 1 when any reference is unresolved.
+
+--fix auto-resolves what it can: for each missing reference it searches the
+--fix-dir directories (and the .debs inside them), the fetch cache, then the
+repos by name (unless --no-fetch), places every found artifact where the
+check expects it, re-signs the bundle, re-runs the check, and writes the
+fixed copy to -o (default <input>-fixed.ipa). Tier-1 load-command gaps are
+fixed automatically; tier-2 dlopen findings ask for confirmation unless
+--yes is given (in a non-interactive shell they are left alone). The input
+is never modified. Exit code is 1 when anything remains unresolved.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if fix {
+				return app.CheckAndFix(input, output, fixDirs, app.FixOptions{
+					AllowFetch: !noFetch,
+					AutoYes:    yes,
+					Confirm:    ttyConfirm,
+				})
+			}
 			return app.CheckBundle(input)
 		},
 	}
 	f := cmd.Flags()
 	f.StringVarP(&input, "input", "i", "", "the app/ipa/tipa to check")
+	f.StringVarP(&output, "output", "o", "", "fixed output path (with --fix); default <input>-fixed.ipa")
+	f.BoolVar(&fix, "fix", false, "find and inject the missing artifacts into a fixed copy")
+	f.StringArrayVar(&fixDirs, "fix-dir", nil, "directory to search for missing artifacts (repeatable; .debs inside are unpacked and searched too)")
+	f.BoolVar(&yes, "yes", false, "with --fix: auto-confirm tier-2 (heuristic) injections")
+	f.BoolVar(&noFetch, "no-fetch", false, "with --fix: don't search the repos by name")
 	_ = cmd.MarkFlagRequired("input")
 	return cmd
+}
+
+// ttyConfirm is the interactive tier-2 gate for check --fix: it prompts on a
+// real terminal and refuses in a non-interactive shell (scripts/AI must pass
+// --yes to auto-inject heuristic matches).
+func ttyConfirm(name, artifact string) bool {
+	fi, err := os.Stdin.Stat()
+	if err != nil || fi.Mode()&os.ModeCharDevice == 0 {
+		return false
+	}
+	fmt.Fprintf(os.Stderr, "found %s (at %s) — inject it into the fixed app? [y/N] ", name, artifact)
+	var ans string
+	if _, err := fmt.Fscanln(os.Stdin, &ans); err != nil {
+		return false
+	}
+	return strings.EqualFold(ans, "y") || strings.EqualFold(ans, "yes")
 }
 
 // newCyanCheckCmd validates .cyan config file(s) without applying them:

@@ -31,6 +31,10 @@ type UI struct {
 	Err     io.Writer
 	Color   bool // ANSI colors on
 	Animate bool // animated banner + spinner on
+	// eof is set once stdin runs out (piped input, Ctrl-D). The menu loop
+	// checks it so scripted/closed input exits instead of re-prompting
+	// forever; flow helpers already terminate on empty answers.
+	eof bool
 	// Run is injectable (tests capture instead of touching real apps).
 	Run func(ctx context.Context, opts *app.Options) error
 	// Fetch resolves tweak bundle ids to local .deb paths. Injectable so tests
@@ -84,6 +88,12 @@ func (u *UI) Start() {
 	for {
 		u.menu()
 		choice := u.readLine("\nwhat do you want to do? (type a number, or q to quit) ")
+		if u.eof {
+			// Input ended (piped run, Ctrl-D): leave cleanly instead of
+			// re-prompting against a closed stream forever.
+			u.say(anGreen, "bye! see you next time")
+			return
+		}
 		switch strings.ToLower(strings.TrimSpace(choice)) {
 		case "q", "quit", "exit":
 			u.say(anGreen, "bye! see you next time")
@@ -148,6 +158,7 @@ func (u *UI) readLine(prompt string) string {
 	}
 	line, err := u.In.ReadString('\n')
 	if err != nil && len(line) == 0 {
+		u.eof = true
 		return ""
 	}
 	return strings.TrimSpace(strings.TrimSuffix(line, "\n"))
@@ -579,7 +590,12 @@ func (u *UI) fetchTweaks(ctx context.Context, ids, sources []string, noRecurse b
 	return fetch.Resolve(ctx, ids, sources, noRecurse, cacheDir, nil)
 }
 
-// flowCheck is menu 5: the merge-completeness check.
+// flowCheck is menu 5: the merge-completeness check, with an optional
+// auto-fix pass (the CLI's `check --fix`). A plain check only reports;
+// the fix path searches the folders the user names (plus the fetch cache
+// and, when allowed, the repos), places every found artifact where the
+// check expects it, re-signs, and writes a fixed copy. Tier-2 heuristic
+// matches are auto-confirmed here: the user already said they want fixes.
 func (u *UI) flowCheck() {
 	u.title("check")
 	u.say(anWhite, "xkvm looks at every file inside an app and makes sure each tweak can")
@@ -589,10 +605,37 @@ func (u *UI) flowCheck() {
 	if appPath == "" {
 		return
 	}
-	out, err := u.runSpinning("checking "+shortName(appPath)+"...", func() error {
-		return app.CheckBundle(appPath)
+	if !u.askYesNo("want me to try to fix missing files automatically? (searches the folders you name + the online repos, then writes a fixed copy)", false) {
+		out, err := u.runSpinning("checking "+shortName(appPath)+"...", func() error {
+			return app.CheckBundle(appPath)
+		})
+		u.showResult(out, err, "all clear — every tweak can find what it needs!")
+		return
+	}
+	// Fix path: collect search folders (optional — the cache and the repos
+	// are always searched when no folder is given), ask about the network,
+	// and let the user pick where the fixed copy goes.
+	var fixDirs []string
+	if first := u.pathPrompt("which folder should I search for the missing files? (leave empty to skip folders)", ""); first != "" {
+		fixDirs = append(fixDirs, first)
+		for {
+			more := u.pathPrompt("add another search folder? (leave empty to stop)", "")
+			if more == "" {
+				break
+			}
+			fixDirs = append(fixDirs, more)
+		}
+	}
+	allowFetch := u.askYesNo("also search the online repos if the folders don't have the file? (needs internet)", true)
+	outPath := u.pathPrompt("where should the fixed copy go? (leave empty for: <name>-fixed.ipa)", "")
+	fmt.Fprintln(u.Out)
+	out, err := u.runSpinning("checking "+shortName(appPath)+" and fixing what's missing...", func() error {
+		return app.CheckAndFix(appPath, outPath, fixDirs, app.FixOptions{
+			AllowFetch: allowFetch,
+			AutoYes:    true, // the menu already confirmed the fix pass
+		})
 	})
-	u.showResult(out, err, "all clear — every tweak can find what it needs!")
+	u.showResult(out, err, "all fixed — every tweak can now find what it needs!")
 }
 
 // help prints the plain-language guide with real commands.
@@ -627,6 +670,7 @@ func (u *UI) help() {
 		"  xkvm rootful -i tweak-rootless.deb -o tweak.deb      # convert back to rootful",
 		"  xkvm debify -i MyTweak.dylib -o MyTweak.deb          # build a .deb",
 		"  xkvm check -i App-Tweaked.ipa                        # check for trouble",
+		"  xkvm check -i App-Tweaked.ipa --fix -o App-Fixed.ipa  # check and fix what's missing",
 		"  xkvm cyan-check recipe.cyan                          # check a recipe",
 		"  xkvm cache                                          # show the fetch cache folder",
 		"  xkvm cache --clear                                  # empty the fetch cache",

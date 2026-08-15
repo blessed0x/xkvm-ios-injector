@@ -101,6 +101,49 @@ func TestTUIMenuDispatchExtractAndCheck(t *testing.T) {
 	_ = calls
 }
 
+func TestTUICheckFixFlowPromptsAndRoutes(t *testing.T) {
+	// Menu 5 with the fix pass accepted: fix-dir + fetch + output prompts
+	// must render, and the flow must route to CheckAndFix (its distinctive
+	// "does not exist" error, rather than CheckBundle's report-only path).
+	// The input file doesn't exist, so CheckAndFix fails fast before any
+	// search touches the cache or the network.
+	out := runUI(t, "5\napp.ipa\ny\n/opt/tweaks\n\ny\n\nq\n", nil)
+	for _, want := range []string{
+		"want me to try to fix missing files automatically?",
+		"which folder should I search for the missing files?",
+		"add another search folder?",
+		"also search the online repos",
+		"where should the fixed copy go?",
+		"all fixed — every tweak can now find what it needs!",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("fix flow missing %q; output:\n%s", want, out)
+		}
+	}
+	if !strings.Contains(out, "app.ipa does not exist") {
+		t.Errorf("fix flow should have failed fast on the missing input (CheckAndFix routing); output:\n%s", out)
+	}
+}
+
+func TestTUICheckDeclinesFixStaysPlainCheck(t *testing.T) {
+	// Answering no to the fix offer keeps the plain check: no fix-dir / fetch
+	// / output prompts, and CheckBundle's report-only phrasing.
+	out := runUI(t, "5\napp.ipa\nn\nq\n", nil)
+	for _, absent := range []string{
+		"which folder should I search for the missing files?",
+		"also search the online repos",
+	} {
+		if strings.Contains(out, absent) {
+			t.Errorf("declined fix flow still asked %q; output:\n%s", absent, out)
+		}
+	}
+	for _, want := range []string{"which app should I check?", "that didn't work"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("plain check missing %q; output:\n%s", want, out)
+		}
+	}
+}
+
 func TestTUIErrorShown(t *testing.T) {
 	out := runUI(t, "1\napp.ipa\nTweak.dylib\n\nn\nn\nn\nn\nq\n", func(_ context.Context, _ *app.Options) error {
 		return errors.New("boom: no such file")
@@ -113,15 +156,33 @@ func TestTUIErrorShown(t *testing.T) {
 }
 
 func TestTUIEOFEndsGracefully(t *testing.T) {
-	// Empty input → menu shows, EOF returns empty choice, loop re-prompts,
-	// and since EOF stays empty the loop would spin — so we feed just "q".
-	// This test pins that EOF on the FIRST read (no input at all) is handled
-	// without panicking by using the cancel path in a flow: menu 1, then
-	// empty app path → requirePath loops forever on EOF... so instead pin
-	// that 'q' from the main menu exits with the bye message.
+	// Piping 'q' from the main menu exits with the bye message.
 	out := runUI(t, "q\n", nil)
 	if !strings.Contains(out, "bye!") {
 		t.Errorf("missing farewell; output:\n%s", out)
+	}
+}
+
+func TestTUIEOFExitsWithoutHanging(t *testing.T) {
+	// No input at all (EOF on the very first read, e.g. 'echo | xkvm' or a
+	// script with closed stdin): the menu shows, the loop sees EOF, and the
+	// TUI must exit cleanly instead of re-prompting against a closed stream
+	// forever. This is what keeps a bare `xkvm` in a non-interactive context
+	// from hanging.
+	out := runUI(t, "", nil)
+	if !strings.Contains(out, "bye!") {
+		t.Errorf("missing farewell on immediate EOF; output:\n%s", out)
+	}
+}
+
+func TestTUIEOFInFlowReturnsToMenuThenExits(t *testing.T) {
+	// EOF lands mid-flow (menu 3, then no input): the flow's empty-answer
+	// path sends the user back to the menu, and the loop's EOF check then
+	// exits. Pins that a half-typed scripted run terminates instead of
+	// spinning.
+	out := runUI(t, "3\n", nil)
+	if !strings.Contains(out, "bye!") {
+		t.Errorf("missing farewell after mid-flow EOF; output:\n%s", out)
 	}
 }
 

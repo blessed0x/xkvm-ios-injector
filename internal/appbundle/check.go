@@ -171,6 +171,35 @@ func (b *Bundle) CheckReferences() ([]MissingRef, error) {
 	return refs, nil
 }
 
+// FixTarget maps a missing reference to the artifact it needs and where it
+// belongs in the bundle: (artifact basename, absolute target directory,
+// tier2). Tier-1 load commands resolve exactly like CheckReferences does
+// (resolveBundleRef + the .appex context), so fixing lands files precisely
+// where the completeness check looks for them. Tier-2 dlopen findings have
+// no placement info in the reference itself; Frameworks/ is the reachable
+// spot (the reachability model treats it as reachable from any binary), so
+// that's where a dlopen'd framework is placed.
+func (b *Bundle) FixTarget(m MissingRef) (name, dir string, tier2 bool) {
+	if m.Suspected {
+		// Dep is "suspected runtime dlopen of <NAME>.framework".
+		name = m.Dep
+		if i := strings.LastIndex(name, " of "); i >= 0 {
+			name = name[i+len(" of "):]
+		}
+		return name, filepath.Join(b.Path, "Frameworks"), true
+	}
+	binPath := filepath.Join(b.Path, filepath.FromSlash(m.From))
+	contextDir := b.Path
+	if i := strings.Index(binPath, ".appex"); i >= 0 {
+		contextDir = filepath.Dir(binPath[:i+len(".appex")])
+	}
+	name, dir, ok := resolveBundleRef(m.Dep, binPath, b.Path, contextDir)
+	if !ok {
+		return "", "", false
+	}
+	return name, dir, false
+}
+
 // reachability is the precomputed dlopen-reachability model for one bundle:
 // frameworks at Frameworks/ and the app root are reachable from any binary,
 // while frameworks nested inside a .bundle/.appex are reachable only from
