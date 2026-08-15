@@ -3,6 +3,7 @@ package rootless
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -126,13 +127,17 @@ func TestConvertScriptsWiring(t *testing.T) {
 	}
 
 	// Modes preserved (upstream captures attributes before rewriting).
-	for _, p := range []string{postinst, preinst, payload} {
-		info, err := os.Stat(p)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if info.Mode().Perm() != 0o755 {
-			t.Errorf("%s mode = %o, want 755", p, info.Mode().Perm())
+	// Windows has no unix mode bits: os.Stat reports 0666 for any file, so
+	// the 755 assertion only holds where chmod actually stores permissions.
+	if runtime.GOOS != "windows" {
+		for _, p := range []string{postinst, preinst, payload} {
+			info, err := os.Stat(p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if info.Mode().Perm() != 0o755 {
+				t.Errorf("%s mode = %o, want 755", p, info.Mode().Perm())
+			}
 		}
 	}
 }

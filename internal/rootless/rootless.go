@@ -634,7 +634,8 @@ func WarnFixedPaths(payload string) error {
 		rel, _ := filepath.Rel(payload, path)
 		// Display paths package-relative with the /var/jb root, matching
 		// upstream's fpath (`/$(realpath --relative-base=… "$file")`).
-		displayPath := "/var/jb/" + rel
+		// ToSlash keeps the advisory's forward-slash spelling on Windows.
+		displayPath := "/var/jb/" + filepath.ToSlash(rel)
 		is, err := macho.IsMachO(path)
 		if err != nil {
 			return err

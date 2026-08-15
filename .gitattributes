@@ -1,0 +1,20 @@
+# Text files are stored and checked out with LF everywhere. Without this,
+# GitHub Actions Windows runners (core.autocrlf=true) check out LF text as
+# CRLF, which breaks the golden sha pins and the LF-anchored patch patterns
+# in the fixture tests (they run on every CI leg).
+* text=auto eol=lf
+
+# Binary fixture types must never be line-normalized or filtered.
+*.deb binary
+*.dylib binary
+*.ipa binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.zip binary
+*.gz binary
+*.xz binary
+*.bz2 binary
+*.zst binary
+*.framework binary
+*.bin binary

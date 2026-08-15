@@ -54,7 +54,9 @@ func zipDir(t *testing.T, root, out string) {
 		if err != nil {
 			return err
 		}
-		hdr.Name = rel
+		// Zip entry names must be forward-slash; filepath.Rel yields native
+		// separators (backslashes on Windows), which would break extraction.
+		hdr.Name = filepath.ToSlash(rel)
 		if info.IsDir() {
 			hdr.Name += "/"
 		}

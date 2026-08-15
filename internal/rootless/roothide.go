@@ -540,8 +540,9 @@ func patchPayloadForRoothide(dir, mode string) error {
 			}
 			// dirn has no leading slash (rel is package-relative) while
 			// upstream's fpath is /-rooted — match on "/"+dirn so the
-			// LaunchDaemons/libSandy dir checks actually fire.
-			dirn := "/" + filepath.Dir(rel)
+			// LaunchDaemons/libSandy dir checks actually fire. ToSlash keeps
+			// the forward-slash probes working on Windows walk paths.
+			dirn := "/" + filepath.ToSlash(filepath.Dir(rel))
 			switch {
 			case strings.Contains(dirn, "/Library/LaunchDaemons"):
 				out := strings.ReplaceAll(string(data), "/var/jb/", "/")
@@ -834,7 +835,8 @@ func warnRoothideFixedPaths(dir string) error {
 		if len(strs) > 0 {
 			// Display path package-relative with the leading slash, matching
 			// upstream's fpath; the payload already carries var/jb in rel.
-			warnFixedPathsBlock("/"+rel, is, strs)
+			// ToSlash keeps the advisory's forward-slash spelling on Windows.
+			warnFixedPathsBlock("/"+filepath.ToSlash(rel), is, strs)
 		}
 		return nil
 	})

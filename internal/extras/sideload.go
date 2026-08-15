@@ -35,7 +35,9 @@ func MaterializeSideloadFixes(dir string) ([]string, error) {
 	}
 	paths := make([]string, 0, len(SideloadFixNames))
 	for _, name := range SideloadFixNames {
-		data, err := fsys.ReadFile(filepath.Join("extras", "sideload", name))
+		// go:embed FS paths are always forward-slash; filepath.Join would
+		// produce backslashes on Windows and the lookup would fail.
+		data, err := fsys.ReadFile("extras/sideload/" + name)
 		if err != nil {
 			return nil, fmt.Errorf("embedded sideload fix %s: %w", name, err)
 		}

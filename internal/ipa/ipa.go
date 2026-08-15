@@ -219,7 +219,10 @@ func extractEntry(f *zip.File, dest string) error {
 		// an absolute second element instead of resetting, which would defeat
 		// the containment check below — and Repack dereferences file symlinks,
 		// turning a planted /etc/passwd symlink into an exfiltration vector.
-		if filepath.IsAbs(tgt) {
+		// Rooted targets are rejected on every OS: filepath.IsAbs alone would
+		// miss a leading-slash target on Windows (no drive letter), where the
+		// OS would still resolve it against the current drive's root.
+		if filepath.IsAbs(tgt) || strings.HasPrefix(tgt, "/") || strings.HasPrefix(tgt, "\\") {
 			log.Warnf("skipping symlink with absolute target: %s -> %s", f.Name, tgt)
 			return nil
 		}
