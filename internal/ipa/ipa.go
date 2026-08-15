@@ -125,7 +125,7 @@ func Repack(tmpdir, output string, level int) error {
 		}
 
 		if d.IsDir() {
-			return addDir(zw, rel, info)
+			return addDir(zw, filepath.ToSlash(rel), info)
 		}
 
 		// Dereference file symlinks like the `zip` tool; skip directory ones.
@@ -141,7 +141,9 @@ func Repack(tmpdir, output string, level int) error {
 			}
 			info = st
 		}
-		return addFile(zw, rel, path, info, level)
+		// Zip entry names must be forward-slash (the spec, and iOS/Payload
+		// layout); filepath.Rel yields native separators, so normalize.
+		return addFile(zw, filepath.ToSlash(rel), path, info, level)
 	})
 	if err != nil {
 		return err

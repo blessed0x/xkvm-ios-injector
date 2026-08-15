@@ -157,7 +157,11 @@ func tarDir(root string, control bool) ([]byte, error) {
 				return err
 			}
 			hdr.Typeflag = tar.TypeSymlink
-			hdr.Linkname = link
+			// os.Readlink returns native separators (backslashes on Windows),
+			// but tar targets are always forward-slash — a backslash Linkname
+			// would break install on dpkg/iOS. Same normalization as the entry
+			// names above.
+			hdr.Linkname = filepath.ToSlash(link)
 			return tw.WriteHeader(hdr)
 		}
 		hdr.Size = info.Size()
