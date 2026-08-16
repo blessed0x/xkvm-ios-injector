@@ -9,8 +9,11 @@ import (
 	"strings"
 )
 
-// Version is the xkvm release version.
-const Version = "0.1.0-dev"
+// Version is the xkvm release version. Source builds report the dev marker;
+// release builds override it via -ldflags "-X
+// github.com/xscope0/xkvm-ios-injector/internal/app.Version=vX.Y.Z"
+// (goreleaser sets this from the git tag).
+var Version = "0.1.0-dev"
 
 // Options captures the full xkvm CLI surface. Flag names, shorthands and
 // semantics are cyan-compatible; Azule-exclusive features use long flags

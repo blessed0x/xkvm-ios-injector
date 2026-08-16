@@ -39,6 +39,17 @@ make lint     # gofmt + go vet + staticcheck — the CI gate
    more than the what.
 5. CI runs the same gate on macOS and Linux; wait for it to go green.
 
+## Cutting a release
+
+1. Make sure `main` is green — `make qa` locally, CI green on the last push.
+2. Tag and push the version: `git tag v0.1.0 && git push origin v0.1.0`.
+3. The tag fires `.github/workflows/release.yml`: goreleaser builds all six
+   platform combos, injects the tag into `xkvm --version`, and publishes the
+   assets the one-shot installers fetch. No manual upload step.
+
+Asset naming (`.goreleaser.yaml`) and the installers are one contract —
+change them in lockstep.
+
 ## Asking questions
 
 For feature ideas and design questions, open an issue *before* writing code.

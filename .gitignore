@@ -18,5 +18,8 @@
 /.omc/
 /.verifydriver/
 
+# goreleaser output (local snapshot runs; release builds happen in CI).
+/dist/
+
 # macOS
 .DS_Store

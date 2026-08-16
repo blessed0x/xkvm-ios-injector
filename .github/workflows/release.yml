@@ -1,0 +1,30 @@
+name: release
+
+# Fires when a version tag lands (git tag v0.1.0 && git push origin v0.1.0).
+# goreleaser builds the six platform combos, injects the tag into
+# `xkvm --version`, and publishes the assets the one-shot installers
+# (scripts/install.sh, scripts/install.ps1) fetch. Runner pins match ci.yml.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26"
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

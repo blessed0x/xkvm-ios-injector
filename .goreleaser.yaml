@@ -15,10 +15,15 @@ builds:
   - id: xkvm
     main: ./cmd/xkvm
     binary: xkvm
+    # -X injects the tag so `xkvm --version` reports the release version
+    # instead of the dev marker (see internal/app/options.go).
+    ldflags:
+      - -s -w -X github.com/xscope0/xkvm-ios-injector/internal/app.Version={{ .Version }}
     goos: [darwin, linux, windows]
     goarch: [arm64, amd64]
     env:
       - CGO_ENABLED=0
+    mod_timestamp: "{{ .CommitTimestamp }}"
 
 archives:
   - id: default
@@ -26,7 +31,7 @@ archives:
     format_overrides:
       - goos: windows
         formats: [zip]
-    # Default template: {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     wrap_in_directory: true
     # Ship just the binary and the license; the README is already on GitHub.
     files:
@@ -35,6 +40,9 @@ archives:
 
 checksum:
   name_template: checksums.txt
+
+changelog:
+  sort: asc
 
 release:
   # The one-liners install from the latest release; nothing special needed.
