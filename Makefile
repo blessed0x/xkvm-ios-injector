@@ -4,9 +4,9 @@ VERSION ?= 0.1.0-dev
 # The Go files the gofmt gate checks. Scoped to the project's own code —
 # upstream/ (vendored reference) and testdata/ (binary fixtures) are excluded,
 # so the check behaves identically locally and in CI.
-GOFMT_SRC := cmd internal tools.go
+GOFMT_SRC := cmd internal
 
-.PHONY: build test vet tools-check gofmt-check lint lint-golangci install clean
+.PHONY: build test vet tool-check gofmt-check lint lint-golangci qa install clean
 
 build:
 	go build -o bin/$(BIN) ./cmd/xkvm
@@ -17,13 +17,12 @@ test:
 vet:
 	go vet ./...
 
-# tools-check verifies tools.go's pinned imports stay consistent with go.mod
-# via `go mod tidy -diff` (exits non-zero when go.mod/go.sum would change).
-# tools.go cannot be compiled directly — it imports main packages, which the
-# toolchain rejects by design — so tidy -diff is the canonical check that
-# catches a broken import path or a deleted tools.go (which would silently
-# unpin the tool version on the next tidy).
-tools-check:
+# tool-check verifies the go.mod tool-pinned commands (staticcheck,
+# govulncheck) stay consistent via `go mod tidy -diff` (exits non-zero when
+# go.mod/go.sum would change). The tool directive itself pins the versions —
+# no tools.go import file needed — so tidy -diff is the canonical check that
+# catches a broken tool path that would otherwise silently unpin on tidy.
+tool-check:
 	go mod tidy -diff
 
 # gofmt-check fails if any project Go file needs formatting.

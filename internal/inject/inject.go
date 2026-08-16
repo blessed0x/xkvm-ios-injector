@@ -14,11 +14,12 @@
 package inject
 
 import (
+	"cmp"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/xscope0/xkvm-ios-injector/internal/deb"
@@ -85,7 +86,7 @@ func commonKeys() []string {
 	for k := range commonDeps {
 		keys = append(keys, k)
 	}
-	sort.Slice(keys, func(i, j int) bool { return len(keys[i]) > len(keys[j]) })
+	slices.SortFunc(keys, func(a, b string) int { return cmp.Compare(len(b), len(a)) })
 	return keys
 }
 

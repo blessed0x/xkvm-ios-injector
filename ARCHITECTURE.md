@@ -873,7 +873,7 @@ repack .ipa (compression level, exclude hidden files) | emit .app
   xkvm; diff the semantic output (file sets, load commands, plist keys — not bytes). Every
   feature-port milestone must pass differential parity before being marked done.
 - **CI:** GitHub Actions matrix (macos-14 arm64, ubuntu-latest x64); a lint job runs
-  `make lint` (gofmt + `go vet` + staticcheck pinned in go.mod via `tools.go`) and the test
+  `make lint` (gofmt + `go vet` + staticcheck + govulncheck pinned in go.mod via the `tool` directive) and the test
   matrix runs `go test -race ./...`; on-release `goreleaser`.
 
 ---

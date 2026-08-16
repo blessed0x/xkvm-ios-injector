@@ -25,10 +25,11 @@ package macho
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/binary"
 	"fmt"
 	"os"
-	"sort"
+	"slices"
 
 	"github.com/blacktop/go-macho"
 	"github.com/blacktop/go-macho/types"
@@ -39,6 +40,20 @@ type CString struct {
 	FileOff uint32 // file offset of the string's first byte
 	Addr    uint64 // virtual address of the string
 	Value   string
+}
+
+// inPlaceEdit is a __cstring replacement that fits in the original slot.
+type inPlaceEdit struct {
+	fileOff uint32
+	origLen int
+	repl    string
+}
+
+// relocation is a growing __cstring replacement packed into
+// __PATCH_ROOTLESS.__cstring.
+type relocation struct {
+	c    CString
+	repl string
 }
 
 // RewriteStats reports what a RewriteCStrings pass did per slice.
@@ -142,15 +157,8 @@ func rewriteSliceCStrings(f *macho.File, orig []byte, convert func(string) strin
 	}
 
 	// Split into in-place edits and growing relocations.
-	var inPlace []struct {
-		fileOff uint32
-		origLen int
-		repl    string
-	}
-	var reloc []struct {
-		c    CString
-		repl string
-	}
+	var inPlace []inPlaceEdit
+	var reloc []relocation
 	for _, c := range strings {
 		stats.Scanned++
 		repl := convert(c.Value)
@@ -158,17 +166,10 @@ func rewriteSliceCStrings(f *macho.File, orig []byte, convert func(string) strin
 			continue
 		}
 		if len(repl) <= len(c.Value) {
-			inPlace = append(inPlace, struct {
-				fileOff uint32
-				origLen int
-				repl    string
-			}{c.FileOff, len(c.Value), repl})
+			inPlace = append(inPlace, inPlaceEdit{c.FileOff, len(c.Value), repl})
 			stats.InPlace++
 		} else {
-			reloc = append(reloc, struct {
-				c    CString
-				repl string
-			}{c, repl})
+			reloc = append(reloc, relocation{c, repl})
 			stats.Relocated++
 		}
 	}
@@ -198,7 +199,7 @@ func rewriteSliceCStrings(f *macho.File, orig []byte, convert func(string) strin
 	}
 
 	// Deterministic order: by original VM address.
-	sort.Slice(reloc, func(i, j int) bool { return reloc[i].c.Addr < reloc[j].c.Addr })
+	slices.SortFunc(reloc, func(a, b relocation) int { return cmp.Compare(a.c.Addr, b.c.Addr) })
 
 	// Pack the replacements; map original -> relocated string.
 	targets := make(map[uint64]relocatedString, len(reloc))
@@ -354,7 +355,7 @@ func patchInstructionRefs(out []byte, f *macho.File, targets map[uint64]relocate
 		}
 		regions = append(regions, region{seg.Addr, uint32(seg.Offset), uint32(seg.Filesz)})
 	}
-	sort.Slice(regions, func(i, j int) bool { return regions[i].addr < regions[j].addr })
+	slices.SortFunc(regions, func(a, b region) int { return cmp.Compare(a.addr, b.addr) })
 
 	var regs [32]uint64
 	for _, r := range regions {

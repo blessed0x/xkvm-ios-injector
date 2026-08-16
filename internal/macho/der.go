@@ -2,10 +2,11 @@ package macho
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/xml"
 	"fmt"
 	"io"
-	"sort"
+	"slices"
 	"strconv"
 )
 
@@ -80,7 +81,7 @@ func entitlementsDER(data []byte) ([]byte, error) {
 			// codesign rejects an unsorted set (confirmed against a
 			// codesign -s - fixture with keys in non-alphabetical input
 			// order: zeta/alpha/mid -> alpha/mid/zeta).
-			sort.Slice(pairs, func(i, j int) bool { return pairs[i].key < pairs[j].key })
+			slices.SortFunc(pairs, func(a, b plistPair) int { return cmp.Compare(a.key, b.key) })
 			var set []byte
 			for _, p := range pairs {
 				val, err := derValue(p.val)
@@ -264,7 +265,7 @@ func derValue(v plistVal) ([]byte, error) {
 	case pDict:
 		// DER SET OF demands canonical ordering at every nesting level, not
 		// just the top one — sort nested pairs too.
-		sort.Slice(v.dict, func(i, j int) bool { return v.dict[i].key < v.dict[j].key })
+		slices.SortFunc(v.dict, func(a, b plistPair) int { return cmp.Compare(a.key, b.key) })
 		var content []byte
 		for _, p := range v.dict {
 			ev, err := derValue(p.val)
