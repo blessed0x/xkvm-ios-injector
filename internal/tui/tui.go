@@ -13,12 +13,14 @@
 package tui
 
 import (
+	"archive/zip"
 	"bufio"
 	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -35,9 +37,10 @@ type UI struct {
 	In      *bufio.Reader
 	Out     io.Writer
 	Err     io.Writer
-	Color   bool // ANSI colors on
-	Animate bool // animated banner + spinner + arrow pickers on
-	InTerm  bool // stdin is a real terminal (arrow keys usable)
+	Color   bool              // ANSI colors on
+	Animate bool              // animated banner + spinner + arrow pickers on
+	InTerm  bool              // stdin is a real terminal (arrow keys usable)
+	palette map[string]string // token -> escape codes (see art.go)
 	// eof is set once stdin runs out (piped input, Ctrl-D). The menu loop
 	// checks it so scripted/closed input exits instead of re-prompting
 	// forever; flow helpers already terminate on empty answers.
@@ -90,6 +93,7 @@ func New() *UI {
 		Color:   stdoutTerm && os.Getenv("NO_COLOR") == "",
 		Animate: stdoutTerm,
 		InTerm:  stdinTerm,
+		palette: buildPalette(),
 		Run:     app.Run,
 		Fetch:   nil, // the real path lives in fetchTweaks
 		FetchPinned: func(ctx context.Context, ids, sources []string, noRecurse bool, cacheDir string, pinned map[string]string) ([]string, error) {
@@ -139,7 +143,7 @@ func (u *UI) Start() {
 	u.intro()
 	for {
 		if !u.pickTool() {
-			u.say(anGreen, "bye! see you next time")
+			u.say(cGreen, "bye! see you next time")
 			return
 		}
 		u.pressEnterToContinue()
@@ -260,10 +264,10 @@ func (u *UI) flowIntro(name, what, example string) {
 	fmt.Fprintln(u.Out)
 	u.title(name)
 	for _, ln := range wrap(what, 72) {
-		u.say(anWhite, "  "+ln)
+		u.say(cWhite, "  "+ln)
 	}
 	if example != "" {
-		u.say(anCyan, "  ex: "+example)
+		u.say(cCyan, "  ex: "+example)
 	}
 	fmt.Fprintln(u.Out)
 }
@@ -275,7 +279,7 @@ func (u *UI) say(color, msg string) {
 
 // title prints a centered-ish banner line.
 func (u *UI) title(t string) {
-	fmt.Fprintln(u.Out, u.paint(anBold+anMagenta, "── "+t+" "+strings.Repeat("─", max(0, 56-len(t)))))
+	fmt.Fprintln(u.Out, u.paint(anBold+cMagenta, "── "+t+" "+strings.Repeat("─", max(0, 56-len(t)))))
 }
 
 // readLine prints prompt (if non-empty) and reads one line from stdin,
@@ -354,11 +358,11 @@ func (u *UI) showResult(out string, err error, okMsg string) {
 	}
 	fmt.Fprintln(u.Out)
 	if err != nil {
-		u.say(anRed, "[fail] "+okMsg)
-		u.say(anRed, "  why: "+err.Error())
-		u.say(anYellow, "  that didn't work — check the lines above for the full story.")
+		u.say(cRed, "[fail] "+okMsg)
+		u.say(cRed, "  why: "+err.Error())
+		u.say(cYellow, "  that didn't work — check the lines above for the full story.")
 	} else {
-		u.say(anGreen, "[ok] "+okMsg)
+		u.say(cGreen, "[ok] "+okMsg)
 	}
 }
 
@@ -406,7 +410,7 @@ func (u *UI) requireAnswer(question, def, noun string) string {
 	for {
 		p := u.pathPrompt(question, def)
 		if isCancel(p) {
-			u.say(anYellow, "ok, back to the menu.")
+			u.say(cYellow, "ok, back to the menu.")
 			return ""
 		}
 		if p != "" {
@@ -414,10 +418,10 @@ func (u *UI) requireAnswer(question, def, noun string) string {
 		}
 		empties++
 		if empties == 1 {
-			u.say(anYellow, "  that needs a "+noun+". type it, or press enter again to go back to the menu.")
+			u.say(cYellow, "  that needs a "+noun+". type it, or press enter again to go back to the menu.")
 			continue
 		}
-		u.say(anYellow, "  ok, back to the menu.")
+		u.say(cYellow, "  ok, back to the menu.")
 		return ""
 	}
 }
@@ -456,7 +460,7 @@ func (u *UI) flowInject() {
 	}
 	files := u.loopPaths("which tweak should I inject? (a .dylib, .deb, .framework, .bundle, or folder)", "add another tweak? (path, or leave empty to stop)")
 	if len(files) == 0 {
-		u.say(anYellow, "no tweaks to inject — add at least one file.")
+		u.say(cYellow, "no tweaks to inject — add at least one file.")
 		return
 	}
 	u.runInject(appPath, files)
@@ -518,7 +522,7 @@ func compressChoices() []Choice {
 // it downloaded).
 func (u *UI) runInject(appPath string, files []string) {
 	if len(files) == 0 {
-		u.say(anYellow, "no tweaks to inject — add at least one file.")
+		u.say(cYellow, "no tweaks to inject — add at least one file.")
 		return
 	}
 	outPath := u.pathPrompt("where should the result go? (leave empty for: <app>-tweaked.ipa)", "")
@@ -651,8 +655,22 @@ func (u *UI) compressPick() int {
 		if i, ok := matchChoice(choices, line); ok {
 			return i
 		}
-		u.say(anYellow, "  pick a level from 0 to 9!")
+		u.say(cYellow, "  pick a level from 0 to 9!")
 	}
+}
+
+// convertOutName derives the standard jailbreak package filename for a
+// converted .deb: Tweak.deb → Tweak.arm64.deb (rootless), .arm64e
+// (roothide), .xn.arm64 (Xina), .arm (rootful). Existing architecture
+// suffixes are stripped first so re-converting doesn't stack them.
+func convertOutName(in, kind string) string {
+	base := strings.TrimSuffix(in, ".deb")
+	base = strings.TrimSuffix(base, ".DEB")
+	for _, sfx := range []string{".arm", ".arm64", ".arm64e", ".xn.arm64", ".iphoneos-arm", ".iphoneos-arm64", "_iphoneos-arm", "_iphoneos-arm64", "-arm", "-arm64", "_arm64"} {
+		base = strings.TrimSuffix(base, sfx)
+	}
+	base = strings.TrimSuffix(base, "_arm64") // trailing underscore forms
+	return base + "." + kind + ".deb"
 }
 
 // flowExtract is the tweaks menu's extract feature.
@@ -697,10 +715,10 @@ func (u *UI) flowConvert() {
 		"xkvm repackages tweaks between the layouts different jailbreaks use — byte-faithful ports of rootless-patcher, RootHidePatcher, Derootifier and Xinam1ne's converter.",
 		"rootful Tweak.deb → rootless Tweak.deb (Dopamine/ellekit)")
 	choices := []Choice{
-		{"rootful → rootless", "the modern jailbreak layout: tweaks live in var/jb, converted the way rootless-patcher does it (Dopamine, ellekit setups)", "Tweak.deb → Tweak-rootless.deb", false},
-		{"rootless → roothide", "the RootHidePatcher layout that hides the jailbreak from app detection, including its auto-patch symlink mechanism", "Tweak-rootless.deb → Tweak-roothide.deb", false},
-		{"rootful → rootless (Xina style)", "the Xinam1ne/Xina layout with short symlink-form paths (older Xina jailbreaks)", "Tweak.deb → Tweak-xina.deb", false},
-		{"rootless → rootful", "convert back to the classic /Library layout (unc0ver, checkra1n and old tweaks)", "Tweak-rootless.deb → Tweak.deb", false},
+		{"rootful → rootless", "the modern jailbreak layout: tweaks live in var/jb, converted the way rootless-patcher does it. For rootless setups on iOS 15-17 (Dopamine + ElleKit, palera1n-rootless)", "Tweak.deb → Tweak.arm64.deb", false},
+		{"rootless → roothide", "the RootHidePatcher layout that hides the jailbreak from app detection (banking apps, games), incl. its auto-patch symlink mechanism. For hide-the-jailbreak setups on iOS 14-17", "Tweak-rootless.deb → Tweak.arm64e.deb", false},
+		{"rootful → rootless (Xina style)", "the Xinam1ne/Xina layout with short symlink-form paths, for XinaA15-era setups on iOS 15.0-15.4.1", "Tweak.deb → Tweak.xn.arm64.deb", false},
+		{"rootless → rootful", "convert back to the classic /Library layout — unc0ver, checkra1n and pre-rootless tweaks on iOS 11-14", "Tweak-rootless.deb → Tweak.arm.deb", false},
 	}
 	picked := u.choose("convert which way?", choices, false)
 	if len(picked) == 0 {
@@ -710,7 +728,12 @@ func (u *UI) flowConvert() {
 	if in == "" {
 		return
 	}
-	out := u.pathPrompt("output .deb path? (leave empty for: <name>-converted.deb)", "")
+	// Default output names follow the standard jailbreak package naming:
+	// .arm = rootful, .arm64 = rootless, .arm64e = roothide,
+	// .xn.arm64 = Xina-style rootless.
+	kinds := []string{"arm64", "arm64e", "xn.arm64", "arm"}
+	kind := kinds[picked[0]]
+	out := u.pathPrompt("output .deb path? (leave empty for: "+convertOutName(in, kind)+")", convertOutName(in, kind))
 	switch picked[0] {
 	case 0:
 		thin := u.askYesNo("thin the binaries to arm64 only? (smaller package; 64-bit-device-only)", false)
@@ -964,7 +987,21 @@ func (u *UI) flowFetch() {
 		return
 	}
 	u.showResult(out, nil, fmt.Sprintf("fetched %d .deb(s) to %s — inject them with the apps menu!", len(fetched), outDir))
-	if len(fetched) == 0 || !u.askYesNo("want to inject this tweak into an app right now?", true) {
+	if len(fetched) == 0 {
+		return
+	}
+	// Portable export: one .zip with everything that was just downloaded,
+	// so the set can be moved to another tool/device/repo in one file.
+	if u.askYesNo("pack the fetched tweak(s) into one shareable .zip? (handy for exporting anywhere)", true) {
+		zipPath := u.pathPrompt("zip path? (leave empty for: <folder>/xkvm-fetched.zip)", filepath.Join(outDir, "xkvm-fetched.zip"))
+		n, zerr := zipDebs(fetched, zipPath)
+		if zerr != nil {
+			u.say(cRed, "couldn't write the zip: "+zerr.Error())
+		} else {
+			u.say(cGreen, fmt.Sprintf("[ok] packed %d file(s) into %s", n, zipPath))
+		}
+	}
+	if !u.askYesNo("want to inject this tweak into an app right now?", true) {
 		return
 	}
 	appPath := u.requirePath("which app should I tweak? (.ipa / .tipa / .app)", "")
@@ -1077,7 +1114,7 @@ func (u *UI) help() {
 	}
 	for _, ln := range guide {
 		if strings.HasPrefix(ln, "  •") {
-			fmt.Fprintln(u.Out, u.paint(anCyan, ln))
+			fmt.Fprintln(u.Out, u.paint(cCyan, ln))
 		} else {
 			fmt.Fprintln(u.Out, ln)
 		}
@@ -1117,15 +1154,15 @@ func (u *UI) flowCache() {
 		"cache --clear empties everything at once")
 	dir, debs, bytes, err := u.CacheUsage()
 	if err != nil {
-		u.say(anRed, "couldn't read the cache: "+err.Error())
+		u.say(cRed, "couldn't read the cache: "+err.Error())
 		return
 	}
-	u.say(anCyan, "cache folder: "+dir)
+	u.say(cCyan, "cache folder: "+dir)
 	if debs == 0 {
-		u.say(anGreen, "it's empty right now — fetch something and it'll show up here.")
+		u.say(cGreen, "it's empty right now — fetch something and it'll show up here.")
 		return
 	}
-	u.say(anCyan, fmt.Sprintf("%d cached tweak(s), %s", debs, fetch.HumanBytes(bytes)))
+	u.say(cCyan, fmt.Sprintf("%d cached tweak(s), %s", debs, fetch.HumanBytes(bytes)))
 
 	choices := []Choice{
 		{"remove only the old entries", "delete entries 7 days or older — the same prune a fetch does automatically", "prune the TTL-expired .debs", false},
@@ -1167,11 +1204,11 @@ func (u *UI) flowDecrypt() {
 	u.flowIntro("decrypt",
 		"xkvm signs into the App Store with your Apple ID and downloads an app's IPA — the same flow ipatool and PancakeStore use. Sign in once; the session is remembered on this machine.",
 		"310633997 or an apps.apple.com link → App.id.ipa")
-	u.say(anYellow, "the app you want must:")
-	u.say(anWhite, "  • have been purchased with the same Apple ID you sign in with")
-	u.say(anWhite, "  • not be installed on your device (offloading works)")
-	u.say(anWhite, "  • have valid versions to download (some apps don't)")
-	u.say(anYellow, "if an app can't be downloaded or crashes after launch, xkvm can't fix it.")
+	u.say(cYellow, "the app you want must:")
+	u.say(cWhite, "  • have been purchased with the same Apple ID you sign in with")
+	u.say(cWhite, "  • not be installed on your device (offloading works)")
+	u.say(cWhite, "  • have valid versions to download (some apps don't)")
+	u.say(cYellow, "if an app can't be downloaded or crashes after launch, xkvm can't fix it.")
 	fmt.Fprintln(u.Out)
 
 	appleID, password := "", ""
@@ -1196,9 +1233,9 @@ func (u *UI) flowDecrypt() {
 			}
 		case picked[0] == 2: // log out, then sign in fresh
 			if err := u.Logout(); err != nil {
-				u.say(anRed, "couldn't log out: "+err.Error())
+				u.say(cRed, "couldn't log out: "+err.Error())
 			} else {
-				u.say(anGreen, "signed out. the saved login is gone.")
+				u.say(cGreen, "signed out. the saved login is gone.")
 			}
 			appleID, password = u.askCredentials()
 			if appleID == "" {
@@ -1275,7 +1312,7 @@ func (u *UI) flowDecrypt() {
 	})
 	if err != nil {
 		u.showResult(out, err, "nothing downloaded")
-		u.say(anYellow, "  tip: if the saved sign-in expired, pick 'change to a different Apple ID' next time and sign in again.")
+		u.say(cYellow, "  tip: if the saved sign-in expired, pick 'change to a different Apple ID' next time and sign in again.")
 		return
 	}
 	u.showResult(out, nil, "downloaded to "+path+" — inject tweaks into it with the apps menu.")
@@ -1293,6 +1330,42 @@ func (u *UI) askCredentials() (string, string) {
 		return "", ""
 	}
 	return appleID, password
+}
+
+// zipDebs packs the given files into one archive (flat entries, stored,
+// so any zip tool opens it) and returns the number of files written.
+func zipDebs(paths []string, outZip string) (int, error) {
+	f, err := os.Create(outZip)
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+	zw := zip.NewWriter(f)
+	n := 0
+	for _, p := range paths {
+		src, err := os.Open(p)
+		if err != nil {
+			zw.Close()
+			return n, err
+		}
+		w, err := zw.Create(filepath.Base(p))
+		if err != nil {
+			src.Close()
+			zw.Close()
+			return n, err
+		}
+		_, err = io.Copy(w, src)
+		src.Close()
+		if err != nil {
+			zw.Close()
+			return n, err
+		}
+		n++
+	}
+	if err := zw.Close(); err != nil {
+		return n, err
+	}
+	return n, nil
 }
 
 // shortName returns a path's final component, trimmed to ~40 chars.

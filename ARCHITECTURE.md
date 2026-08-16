@@ -372,7 +372,12 @@ CLI. Design decisions:
   the panel so failures always say why.
 - **Sensible defaults.** Inject preselects `--fakesign` + `--overwrite`
   (toggleable), compression defaults to 6, fetch version picker preselects
-  latest.
+  latest. Convert fills the output with standard jailbreak package naming
+  (`Tweak.arm.deb` rootful / `.arm64` rootless / `.arm64e` roothide /
+  `.xn.arm64` Xina — suffix stacking stripped on re-conversion), fetch offers
+  a one-`.zip` export of everything downloaded. The intro is a moon scene
+  with a soft per-line gradient; the whole UI uses a muted 256/truecolor
+  palette (rose/sage/sand/steel/lavender) instead of primary colors.
 
 Coverage: `internal/tui/tui_test.go` pipes the line protocol through the full
 loop (intro/categories, help/about, inject dispatch incl. customization +

@@ -108,7 +108,7 @@ func (u *UI) chooseLine(question string, choices []Choice, multi bool) []int {
 		if multi && c.Def {
 			mark = "x"
 		}
-		fmt.Fprintf(u.Out, "  %s%d. %s  [%s]\n", u.paint(anCyan, ""), i+1, c.Name, mark)
+		fmt.Fprintf(u.Out, "  %s%d. %s  [%s]\n", u.paint(cCyan, ""), i+1, c.Name, mark)
 		if c.Desc != "" {
 			fmt.Fprintf(u.Out, "       %s\n", u.paint(anDim, c.Desc))
 		}
@@ -124,7 +124,7 @@ func (u *UI) chooseLine(question string, choices []Choice, multi bool) []int {
 		if i, ok := matchChoice(choices, line); ok {
 			return []int{i}
 		}
-		u.say(anYellow, "  try a number from the list!")
+		u.say(cYellow, "  try a number from the list!")
 	}
 }
 
@@ -226,11 +226,11 @@ func (u *UI) chooseRaw(question string, choices []Choice, multi bool) []int {
 			if i == cursor {
 				arrow = "▸ "
 			}
-			num := u.paint(anCyan, fmt.Sprintf("%2d. ", i+1))
+			num := u.paint(cCyan, fmt.Sprintf("%2d. ", i+1))
 			if multi {
 				mark := u.paint(anDim, "[○]")
 				if sel[i] {
-					mark = u.paint(anGreen, "[●]")
+					mark = u.paint(cGreen, "[●]")
 				}
 				if i == cursor {
 					b.WriteString(arrow + num + u.paint(anBold, c.Name) + "  " + mark + "\n")
@@ -311,14 +311,14 @@ func legend(multi bool) string {
 // width + " │"), so the box borders align no matter how a description wraps.
 func (u *UI) panelPad(c Choice, width, wantLines int) string {
 	top := "   ┌" + strings.Repeat("─", width+2) + "┐\n"
-	body := panelRow(u, anBold+anCyan, "why this one", width)
+	body := panelRow(u, anBold+cCyan, "why this one", width)
 	rows := panelText(c, width)
 	for i := 0; i < wantLines; i++ {
 		txt := ""
 		if i < len(rows) {
 			txt = rows[i]
 		}
-		body += panelRow(u, anWhite, txt, width)
+		body += panelRow(u, cWhite, txt, width)
 	}
 	bot := "   └" + strings.Repeat("─", width+2) + "┘\n"
 	return top + body + bot
@@ -342,5 +342,5 @@ func max(a, b int) int {
 // titleText is title() without the trailing newline handling differences —
 // used by the raw renderer so line counting stays exact.
 func (u *UI) titleText(t string) string {
-	return u.paint(anBold+anMagenta, "── "+t+" "+strings.Repeat("─", max(0, 56-len(t))))
+	return u.paint(anBold+cMagenta, "── "+t+" "+strings.Repeat("─", max(0, 56-len(t))))
 }

@@ -5,77 +5,161 @@ package tui
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/xscope0/xkvm-ios-injector/internal/app"
 )
 
-// ANSI color codes (basic 16-color — safe everywhere).
+// Color tokens are semantic keys, not raw codes: the actual escape
+// sequences live in a per-UI palette (soft, low-saturation 256-color set on
+// capable terminals, truecolor where COLORTERM says so, plain ANSI 16 as
+// the floor). anBold/anDim/anInvert/anReset stay literal — they combine
+// with any palette entry.
 const (
-	anRed     = "\x1b[31m"
-	anGreen   = "\x1b[32m"
-	anYellow  = "\x1b[33m"
-	anBlue    = "\x1b[34m"
-	anMagenta = "\x1b[35m"
-	anCyan    = "\x1b[36m"
-	anWhite   = "\x1b[37m"
-	anBold    = "\x1b[1m"
-	anReset   = "\x1b[0m"
+	cRed     = "red"     // errors
+	cGreen   = "green"   // success / toggled-on
+	cYellow  = "yellow"  // warnings, gentle amber
+	cBlue    = "blue"    // info accents
+	cMagenta = "magenta" // section titles
+	cCyan    = "cyan"    // lists and accepted accents
+	cWhite   = "white"   // body text
+	anBold   = "\x1b[1m"
+	anReset  = "\x1b[0m"
 )
 
-// logo is the xkvm mark (mirrors the README banner). A raw string so every
-// backslash survives verbatim.
-const logo = ` ___    ___ ___  __    ___      ___ _____ ______
-|\  \  /  /|\  \|\  \ |\  \    /  /|\   _ \  _   \
-\ \  \/  / | \  \/  /|\ \  \  /  / | \  \\\__\ \  \
- \ \    / / \ \   ___  \ \  \/  / / \ \  \\|__| \  \
-  /     \/   \ \  \\ \ \  \    / /   \ \  \    \ \  \
- /  /\   \    \ \__\\ \__\ \__/ /     \ \__\    \ \__\
-/__/ /\ __\    \|__| \|__|\|__|/       \|__|     \|__|
-|__|/ \|__|`
+// palette256 is the calm 256-color set (dusty, not neon — easy on the
+// eyes): rose, sage, sand, steel, lavender, teal, ivory.
+var palette256 = map[string]string{
+	cRed: "\x1b[38;5;174m", cGreen: "\x1b[38;5;114m", cYellow: "\x1b[38;5;179m",
+	cBlue: "\x1b[38;5;110m", cMagenta: "\x1b[38;5;140m", cCyan: "\x1b[38;5;109m",
+	cWhite: "\x1b[38;5;253m", anBold: "\x1b[1m", anDim: "\x1b[2m", anInvert: "\x1b[7m",
+}
 
-// logoRainbow is the per-line color cycle for the banner.
-var logoRainbow = []string{anRed, anYellow, anGreen, anCyan, anBlue, anMagenta, anWhite, anYellow}
+// paletteRGB is the same palette in 24-bit for truecolor terminals — even
+// softer and consistent across themes.
+var paletteRGB = map[string]string{
+	cRed: "\x1b[38;2;208;127;116m", cGreen: "\x1b[38;2;159;191;143m", cYellow: "\x1b[38;2;212;176;106m",
+	cBlue: "\x1b[38;2;143;168;200m", cMagenta: "\x1b[38;2;176;154;200m", cCyan: "\x1b[38;2;143;184;176m",
+	cWhite: "\x1b[38;2;216;212;204m", anBold: "\x1b[1m", anDim: "\x1b[2m", anInvert: "\x1b[7m",
+}
+
+// palette16 is the no-256 floor (same tokens, basic colors).
+var palette16 = map[string]string{
+	cRed: "\x1b[31m", cGreen: "\x1b[32m", cYellow: "\x1b[33m",
+	cBlue: "\x1b[34m", cMagenta: "\x1b[35m", cCyan: "\x1b[36m",
+	cWhite: "\x1b[37m", anBold: "\x1b[1m", anDim: "\x1b[2m", anInvert: "\x1b[7m",
+}
+
+// buildPalette picks the escape set for this UI.
+func buildPalette() map[string]string {
+	switch {
+	case strings.Contains(strings.ToUpper(os.Getenv("COLORTERM")), "TRUECOLOR") || strings.Contains(strings.ToUpper(os.Getenv("COLORTERM")), "24BIT"):
+		return paletteRGB
+	case strings.Contains(os.Getenv("TERM"), "256"):
+		return palette256
+	default:
+		return palette16
+	}
+}
+
+// escapeSeq resolves a token (or "a+b" combination) to its escape codes.
+func (u *UI) escapeSeq(code string) string {
+	if code == "" || u.palette == nil {
+		return ""
+	}
+	if strings.Contains(code, "+") {
+		var out string
+		for _, part := range strings.Split(code, "+") {
+			out += u.escapeSeq(part)
+		}
+		return out
+	}
+	if seq, ok := u.palette[code]; ok {
+		return seq
+	}
+	return code
+}
 
 // spinFrames is the block-art spinner: a bar that grows, then shrinks.
 var spinFrames = []string{"▏", "▎", "▍", "▌", "▋", "▊", "▉", "█", "▉", "▊", "▋", "▌", "▍", "▎"}
 
-// paint wraps s in code (a color/bold escape) when color is on.
+// paint wraps s in code (a palette token or raw escape) when color is on.
 func (u *UI) paint(code, s string) string {
-	if !u.Color || code == "" {
+	if !u.Color || s == "" {
 		return s
 	}
-	return code + s + anReset
+	if seq := u.escapeSeq(code); seq != "" {
+		return seq + s + anReset
+	}
+	return s
 }
 
-// animateBanner prints the logo with a short color cascade, then a growing
-// block bar, so the tool feels alive. The animation only runs when
-// u.Animate is set (a real terminal); otherwise the banner prints instantly.
-func (u *UI) animateBanner() {
-	lines := strings.Split(logo, "\n")
-	for i, ln := range lines {
-		col := ""
-		if u.Color {
-			col = logoRainbow[i%len(logoRainbow)]
-		}
+// moon is the intro scene: a crescent moon with a starfield and soft
+// gradient shading, drawn with block characters so it works on any
+// terminal and reads at any size.
+var moon = []string{
+	"               ·                          ✧",
+	"     ✧                       .",
+	"                 ▄▄▄▄▓▓▄▄▄▄",
+	"       .       ▄▓▓▓██░░░░░░░▀▄",
+	"             ▄▓▓██░░░░░  ✧  ░░▀▄",
+	"            ▄▓██░░░░░  ✵      ░░▀▄",
+	"  ✧        ▄▓█░░░░░░            ░▐█▄",
+	"           ▐█▌░░░░░░            ░░██",
+	"            ▀█▄░░░░░          ░░▄█▀",
+	"             ▀██▄░░░░░      ░░▄█▀",
+	"      .        ▀▀████▓▄▄▄▄▄██▀▀",
+	"                 ✧            ✦",
+	"        ·                        ✧",
+}
+
+// moonColors is the per-line gradient for the moon scene (light rim →
+// shaded body) as 256-color codes; "term" rows reuse the palette tokens.
+var moonColors = []string{
+	"accent", "", "\x1b[38;5;254m", "\x1b[38;5;252m", "\x1b[38;5;250m",
+	"\x1b[38;5;248m", "\x1b[38;5;244m", "\x1b[38;5;240m", "\x1b[38;5;238m",
+	"\x1b[38;5;236m", "\x1b[38;5;238m", "accent", "accent",
+}
+
+// intro shows the animated moon scene with the wordmark, then a short
+// control card. Piped runs get a single plain line (CI, scripts).
+func (u *UI) intro() {
+	for i, ln := range moon {
 		out := ln
+		star := ""
 		if u.Color {
-			if col == "" {
-				col = anWhite
+			star = u.escapeSeq(cYellow)
+			if star == "" {
+				star = u.escapeSeq(cWhite)
 			}
-			out = col + ln + anReset
+			switch moonColors[i%len(moonColors)] {
+			case "accent":
+				out = u.escapeSeq(cCyan) + out
+			case "":
+			default:
+				out = moonColors[i%len(moonColors)] + out
+			}
+			out = strings.ReplaceAll(out, "✧", star+"✧"+anReset)
+			out = strings.ReplaceAll(out, "✦", u.escapeSeq(cMagenta)+"✦"+anReset)
+			out = strings.ReplaceAll(out, "✵", star+"✵"+anReset)
+			out = strings.ReplaceAll(out, "·", u.escapeSeq(cWhite)+"·"+anReset)
+			out += anReset
 		}
 		fmt.Fprintln(u.Out, out)
 		if u.Animate {
-			time.Sleep(35 * time.Millisecond)
+			time.Sleep(28 * time.Millisecond)
 		}
 	}
-	fmt.Fprintln(u.Out, u.paint(anBold, "  the friendly way to tweak your iOS apps"))
+	fmt.Fprintln(u.Out, u.paint(anBold+cMagenta, "   x k v m"))
+	fmt.Fprintln(u.Out, u.paint(cCyan, "   the friendly way to tweak your iOS apps"))
+	fmt.Fprintln(u.Out, u.paint(cWhite, "   v"+app.Version+" · menu for humans, the same flags for scripts and AI"))
 	fmt.Fprintln(u.Out)
-	if u.Animate {
-		u.growBar("warming up the toolbox", 550*time.Millisecond)
+	if !u.Animate {
+		return
 	}
+	u.growBar("warming up the toolbox", 550*time.Millisecond)
 }
 
 // growBar draws a filling █░ bar on one line, then clears it.
@@ -84,7 +168,7 @@ func (u *UI) growBar(msg string, total time.Duration) {
 	delay := total / time.Duration(steps)
 	for i := 1; i <= steps; i++ {
 		bar := strings.Repeat("█", i) + strings.Repeat("░", steps-i)
-		fmt.Fprintf(u.Out, "\r%s %s   ", u.paint(anCyan, "["+bar+"]"), msg)
+		fmt.Fprintf(u.Out, "\r%s %s   ", u.paint(cCyan, "["+bar+"]"), msg)
 		time.Sleep(delay)
 	}
 	fmt.Fprintf(u.Out, "\r%s\r", strings.Repeat(" ", 80))
@@ -94,7 +178,7 @@ func (u *UI) growBar(msg string, total time.Duration) {
 // off it prints a plain "msg..." line instead (pipes, tests).
 func (u *UI) spin(msg string, fn func() error) error {
 	if !u.Animate {
-		fmt.Fprintln(u.Out, u.paint(anCyan, msg+"..."))
+		fmt.Fprintln(u.Out, u.paint(cCyan, msg+"..."))
 		return fn()
 	}
 	done := make(chan error, 1)
@@ -109,24 +193,8 @@ func (u *UI) spin(msg string, fn func() error) error {
 			return err
 		case <-ticker.C:
 			f := spinFrames[i%len(spinFrames)]
-			fmt.Fprintf(u.Out, "\r%s %s   ", u.paint(anGreen, f), msg)
+			fmt.Fprintf(u.Out, "\r%s %s   ", u.paint(cGreen, f), msg)
 			i++
 		}
 	}
-}
-
-// intro shows the animated banner plus a short control card. Piped runs get
-// a single plain line instead (CI, scripts).
-func (u *UI) intro() {
-	u.animateBanner()
-	fmt.Fprintln(u.Out, u.paint(anBold+anCyan, "  v"+app.Version))
-	u.say(anWhite, "  everything works both ways: this menu for humans, the same flags on the command line for scripts and AI.")
-	fmt.Fprintln(u.Out)
-	if !u.Animate {
-		return
-	}
-	fmt.Fprintln(u.Out, "  "+u.paint(anBold, "how to drive it"))
-	fmt.Fprintln(u.Out, "  ↑/↓ or j/k move · 1-9 jumps · enter picks · q backs out · each highlighted option explains itself")
-	fmt.Fprintln(u.Out)
-	u.growBar("warming up the toolbox", 550*time.Millisecond)
 }

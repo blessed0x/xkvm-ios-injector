@@ -1,9 +1,12 @@
 package tui
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -260,7 +263,7 @@ func TestTUICgenAndCyanCheckPrompts(t *testing.T) {
 }
 
 func TestTUIFetchVersionPickerPins(t *testing.T) {
-	u := NewForTest(strings.NewReader("2\n2\ncom.x.tweak\n\n\nY\n\n2\nn\nq\n"), &bytes.Buffer{})
+	u := NewForTest(strings.NewReader("2\n2\ncom.x.tweak\n\n\nY\n\n2\nn\nn\nq\n"), &bytes.Buffer{})
 	var pinned map[string]string
 	u.FetchVersions = func(_ context.Context, id string) ([]fetch.PkgVersion, error) {
 		if id != "com.x.tweak" {
@@ -295,7 +298,7 @@ func TestTUIFetchVersionPickerPins(t *testing.T) {
 func TestTUIFetchNoPickerWhenUnavailable(t *testing.T) {
 	// Without FetchVersions the flow skips the picker entirely and resolves
 	// through the plain Fetch hook.
-	u := NewForTest(strings.NewReader("2\n2\ncom.x.tweak\n\n\nY\n\nN\nq\n"), &bytes.Buffer{})
+	u := NewForTest(strings.NewReader("2\n2\ncom.x.tweak\n\n\nY\n\nN\nN\nq\n"), &bytes.Buffer{})
 	var fetched []string
 	u.Fetch = func(_ context.Context, ids, _ []string, _ bool, dir string) ([]string, error) {
 		fetched = ids
@@ -313,7 +316,7 @@ func TestTUIFetchNoPickerWhenUnavailable(t *testing.T) {
 
 func TestTUIFetchHandsOverToInject(t *testing.T) {
 	u := NewForTest(strings.NewReader(
-		"2\n2\ncom.x.tweak\n\n\nY\n\nY\napp.ipa\n\n\n\n\n6\nn\nq\n"), &bytes.Buffer{})
+		"2\n2\ncom.x.tweak\n\n\nY\n\nn\nY\napp.ipa\n\n\n\n\n6\nn\nq\n"), &bytes.Buffer{})
 	var runOpts *app.Options
 	u.Run = func(_ context.Context, opts *app.Options) error {
 		runOpts = opts
@@ -550,6 +553,71 @@ func TestPanelPadAlignment(t *testing.T) {
 		}
 		if i > 0 && i < len(lines)-1 && !strings.HasSuffix(ln, " │") {
 			t.Errorf("row %d missing closing border: %q", i, ln)
+		}
+	}
+}
+
+// TestTUIFetchZipPack: after a successful fetch the zip offer packs the
+// downloaded debs into one exportable archive.
+func TestTUIFetchZipPack(t *testing.T) {
+	dir := t.TempDir()
+	deb1 := filepath.Join(dir, "tweak.deb")
+	deb2 := filepath.Join(dir, "dep.deb")
+	for _, p := range []string{deb1, deb2} {
+		if err := os.WriteFile(p, []byte("deb-bytes:"+filepath.Base(p)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	zippath := filepath.Join(dir, "xkvm-fetched.zip")
+	u := NewForTest(strings.NewReader("2\n2\ncom.x.tweak\n\n\nY\n"+dir+"\nY\n\nn\nq\n"), &bytes.Buffer{})
+	u.Fetch = func(_ context.Context, ids, _ []string, _ bool, outDir string) ([]string, error) {
+		return []string{deb1, deb2}, nil
+	}
+	u.Start()
+	out := u.Out.(*bytes.Buffer).String()
+	if !strings.Contains(out, "packed 2 file(s)") {
+		t.Errorf("zip result line missing; output:\n%s", out)
+	}
+	zr, err := zip.OpenReader(zippath)
+	if err != nil {
+		t.Fatalf("zip not written where prompted: %v", err)
+	}
+	defer zr.Close()
+	var names []string
+	for _, f := range zr.File {
+		names = append(names, f.Name)
+	}
+	if len(names) != 2 || names[0] != "tweak.deb" || names[1] != "dep.deb" {
+		t.Errorf("zip entries wrong: %v", names)
+	}
+}
+
+// TestConvertOutName: the standard jailbreak naming, with stacking
+// stripped on re-conversion.
+func TestConvertOutName(t *testing.T) {
+	cases := []struct{ in, kind, want string }{
+		{"Tweak.deb", "arm64", "Tweak.arm64.deb"},
+		{"Tweak_1.2_iphoneos-arm.deb", "arm64", "Tweak_1.2.arm64.deb"},
+		{"Tweak.arm64.deb", "arm", "Tweak.arm.deb"},
+		{"Tweak.arm64e.deb", "arm64", "Tweak.arm64.deb"},
+		{"Tweak.arm.deb", "xn.arm64", "Tweak.xn.arm64.deb"},
+		{"Tweak", "arm64e", "Tweak.arm64e.deb"},
+		{"A.B.C.deb", "arm", "A.B.C.arm.deb"},
+	}
+	for _, c := range cases {
+		if got := convertOutName(c.in, c.kind); got != c.want {
+			t.Errorf("convertOutName(%q, %q) = %q, want %q", c.in, c.kind, got, c.want)
+		}
+	}
+}
+
+// TestTUIIntroShowsMoonAndWordmark: the intro scene renders in piped mode
+// (plain, no escapes) with the wordmark and version line.
+func TestTUIIntroShowsMoonAndWordmark(t *testing.T) {
+	out := runUI(t, "q\n", nil)
+	for _, want := range []string{"x k v m", "the friendly way to tweak your iOS apps", "▄▄▄▄▓▓▄▄▄▄"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("intro missing %q", want)
 		}
 	}
 }
