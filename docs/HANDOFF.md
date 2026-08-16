@@ -2,7 +2,7 @@
 
 **Purpose of this file:** bring a new agent/session up to speed on the xkvm
 project without re-reading the whole tree. Read this first, then follow the
-links. Last updated: 2026-08-15.
+links. Last updated: 2026-08-16.
 
 ---
 
@@ -50,9 +50,8 @@ points — no separate code path, so the TUI can't drift from the CLI.
 | CI | GitHub Actions: lint job (`make lint`) + test matrix (macOS 14 arm64, Ubuntu x64, Windows x64) |
 | Gate | `make qa` = `make lint` + `go test -race ./...` + 6-combo cross-compile |
 
-**Current HEAD:** `d3da30d` — "xkvm: check --fix auto-resolver + TUI wiring, and
-bare xkvm opens the menu" (pushed; working tree carries uncommitted work — see
-§8).
+**Current HEAD:** `8fc61d0` — "xkvm: bump Go 1.26.6, pin tools via go.mod
+tool directive, add govulncheck to CI" (pushed; tree clean).
 
 ## 3. Command surface
 
@@ -241,7 +240,7 @@ Two subtle pieces you must not break:
   repos for the missing piece, installs it in the right place, re-signs, and
   writes a fixed copy.
 
-### 7.3 `internal/decrypt` (uncommitted — see §8)
+### 7.3 `internal/decrypt` (committed as `7b7e373`)
 Port of PancakeStore's `MuffinStoreJailed/Functions/IPATool.swift` (itself
 ipatool-derived). Steps, each hermetic-httptest-pinned: GUID → bag.xml →
 authenticate (2FA = `ErrTwoFactor`, pod-follow "russia fix", trailing-slash
@@ -258,40 +257,32 @@ the CLI binds `--<name>` flags automatically (sorted). Mach-O-touching patches
 must follow the strip-edit-resign discipline (extract ents → remove sig → edit
 → sign with ents). Mutual exclusivity lives in `Options.validate()`.
 
-## 8. Current state (2026-08-15) — read this before starting work
+## 8. Current state (2026-08-16) — read this before starting work
 
-**HEAD `d3da30d` is pushed** ("check --fix auto-resolver + TUI wiring, and bare
-xkvm opens the menu"). **The working tree has uncommitted work** — the full
-decrypt feature landed after the last push:
+**HEAD `8fc61d0` is pushed and the tree is clean.** Two batches landed after
+`d3da30d`:
 
-```
- M ARCHITECTURE.md              ← M5 §5.7 decrypt contract (spec-first) added
- M Makefile                     ← `make qa` target added
- M README.md                    ← decrypt command docs + protocol link
- M internal/cli/cli.go          ← `xkvm decrypt` command registered
- M internal/cli/cli_test.go     ← CLI wiring tests
- M internal/tui/tui.go          ← menu 10 decrypt flow + session menu + requirements note
- M internal/tui/tui_test.go     ← TUI decrypt-flow tests (keep/change/logout/never/reuse)
-?? docs/self-improve-protocol.md ← the QA protocol doc (not yet committed)
-?? internal/app/decrypt.go      ← decrypt orchestration
-?? internal/decrypt/            ← the whole decrypt package (client/auth/download/resolve/util + tests)
-```
+- `7b7e373` — `xkvm decrypt` (App Store ipatool flow): M5 §5.7 contract in
+  ARCHITECTURE.md, the `internal/decrypt` package (16 hermetic tests; incl. the
+  nil-interface `SinfPaths` panic fix + regression test), CLI + TUI wiring,
+  `docs/self-improve-protocol.md`.
+- `8fc61d0` — modernization: Go 1.26.4 → 1.26.6 (clears the 6 reachable stdlib
+  CVEs govulncheck reported), staticcheck + govulncheck pinned via the go.mod
+  `tool` directive (`tools.go` deleted), `make lint`/`make qa`/CI updated,
+  `sort.Slice` → `slices.SortFunc`, named struct types in
+  `internal/macho/cstring.go`.
 
-- All 18 packages pass `go test ./...` locally (verified 2026-08-15); `make qa`
-  was green before the last change. CI has not seen the decrypt batch.
-- **What's verified:** the decrypt flow is hermetic-httptest-pinned (16 tests:
-  GUID golden, auth success/2FA/pod-redirect/brazil-fix/rejection, buy headers,
-  end-to-end zip with entry-by-entry assertions, resolve, auth/prefs
-  persistence, TUI flows, CLI wiring). A nil-interface `SinfPaths` panic was
-  caught and fixed with a regression test.
+- **Verified 2026-08-16:** `make qa` fully green — lint (gofmt/vet/tidy/staticcheck/
+  govulncheck; govulncheck: **no vulnerabilities found**) + `-race` suite across
+  all 18 packages + 6-combo cross-compile. CI runs the same gate on macOS-14
+  arm64 / Ubuntu x64 / Windows x64.
 - **What's NOT verified (only a real login can prove it):** live Apple auth —
   no Apple ID exists on this dev machine. Apple's auth is unstable upstream
   too. If live auth fails, the likely first place to look is cookies from
   intermediate redirect hops (Go captures only the final response's cookies).
-- **Natural next steps when you pick this up:** commit + push the decrypt batch
-  (CI will run it on all legs), then optionally add the goreleaser release
-  workflow so the one-shot installers' release path becomes real (no release
-  exists yet; installers fall back to `go install`).
+- **Natural next steps:** add the goreleaser release workflow so the one-shot
+  installers' release path becomes real (no release exists yet; installers fall
+  back to `go install`).
 
 ## 9. Build / test / QA
 
