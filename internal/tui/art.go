@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/xscope0/xkvm-ios-injector/internal/app"
 )
 
 // ANSI color codes (basic 16-color — safe everywhere).
@@ -57,7 +59,14 @@ func (u *UI) animateBanner() {
 		if u.Color {
 			col = logoRainbow[i%len(logoRainbow)]
 		}
-		fmt.Fprintf(u.Out, "%s%s%s\n", col, ln, anReset)
+		out := ln
+		if u.Color {
+			if col == "" {
+				col = anWhite
+			}
+			out = col + ln + anReset
+		}
+		fmt.Fprintln(u.Out, out)
 		if u.Animate {
 			time.Sleep(35 * time.Millisecond)
 		}
@@ -104,4 +113,20 @@ func (u *UI) spin(msg string, fn func() error) error {
 			i++
 		}
 	}
+}
+
+// intro shows the animated banner plus a short control card. Piped runs get
+// a single plain line instead (CI, scripts).
+func (u *UI) intro() {
+	u.animateBanner()
+	fmt.Fprintln(u.Out, u.paint(anBold+anCyan, "  v"+app.Version))
+	u.say(anWhite, "  everything works both ways: this menu for humans, the same flags on the command line for scripts and AI.")
+	fmt.Fprintln(u.Out)
+	if !u.Animate {
+		return
+	}
+	fmt.Fprintln(u.Out, "  "+u.paint(anBold, "how to drive it"))
+	fmt.Fprintln(u.Out, "  ↑/↓ or j/k move · 1-9 jumps · enter picks · q backs out · each highlighted option explains itself")
+	fmt.Fprintln(u.Out)
+	u.growBar("warming up the toolbox", 550*time.Millisecond)
 }

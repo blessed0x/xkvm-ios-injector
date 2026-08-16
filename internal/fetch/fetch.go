@@ -23,6 +23,14 @@ var defaultClient = &http.Client{Timeout: 60 * time.Second}
 // are searched before the Canister index; when an id isn't in any listed
 // source, Canister resolves which repo hosts it.
 func Resolve(ctx context.Context, ids, sources []string, noRecurse bool, cacheDir string, client *http.Client) ([]string, error) {
+	return ResolveVersion(ctx, ids, sources, noRecurse, cacheDir, client, nil)
+}
+
+// ResolveVersion is Resolve with optional Canister version pins: when
+// pinned[id] is non-empty that exact version is downloaded for id instead of
+// the default latest. Dependencies are never pinned — only the ids named in
+// the map. Callers without pins can just use Resolve.
+func ResolveVersion(ctx context.Context, ids, sources []string, noRecurse bool, cacheDir string, client *http.Client, pinned map[string]string) ([]string, error) {
 	if client == nil {
 		client = defaultClient
 	}
@@ -42,6 +50,7 @@ func Resolve(ctx context.Context, ids, sources []string, noRecurse bool, cacheDi
 		cache:     cacheDir,
 		sources:   sources,
 		noRecurse: noRecurse,
+		pinned:    pinned,
 		indexes:   map[string][]Entry{},
 	}
 	var out []string
@@ -62,6 +71,7 @@ type resolver struct {
 	cache     string
 	sources   []string
 	noRecurse bool
+	pinned    map[string]string // package id -> must-have Canister version
 
 	visited map[string]bool    // package ids already resolved (cycle guard)
 	indexes map[string][]Entry // repo base URI -> parsed Packages index
@@ -136,6 +146,29 @@ func (r *resolver) locate(ctx context.Context, id string) (repo, file, depends, 
 	}
 
 	repoID, pkgFile, pkgSHA, pkgVer, cerr := canisterLookup(ctx, r.client, id)
+	if cerr == nil && r.pinned[id] != "" && r.pinned[id] != pkgVer {
+		// A pinned version was requested and the default (latest) isn't it:
+		// pick the matching entry. Unknown pins fail with the list of what
+		// actually exists so the caller can show it.
+		vs, verr := canisterVersions(ctx, r.client, id)
+		if verr != nil {
+			return "", "", "", "", "", verr
+		}
+		repoID, pkgFile, pkgSHA, pkgVer = "", "", "", ""
+		for i := range vs {
+			if vs[i].Version == r.pinned[id] {
+				repoID, pkgFile, pkgSHA, pkgVer = vs[i].RepositoryID, vs[i].PackageFile, vs[i].SHA256, vs[i].Version
+				break
+			}
+		}
+		if repoID == "" {
+			have := make([]string, 0, len(vs))
+			for i := range vs {
+				have = append(have, vs[i].Version)
+			}
+			return "", "", "", "", "", fmt.Errorf("version %q of %s isn't available (have: %s)", r.pinned[id], id, strings.Join(have, ", "))
+		}
+	}
 	if cerr != nil {
 		// Smart dependency fallback: sweep the default repo list for a
 		// Packages-index hit. Repos already consulted this run are skipped

@@ -77,6 +77,40 @@ func better(a, b *canisterPkg) bool {
 	return a.Quality > b.Quality
 }
 
+// canisterVersions returns every visible free package entry for id —
+// deduplicated by version, latest-flagged entries first, otherwise in API
+// order (newest first). Used by the TUI's version picker and by pinned
+// downloads (--version equivalent for the menu).
+func canisterVersions(ctx context.Context, client *http.Client, id string) ([]canisterPkg, error) {
+	body, err := getJSON(ctx, client, canisterBase+"/package/"+id)
+	if err != nil {
+		return nil, err
+	}
+	var resp canisterPkgResp
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("canister: %w", err)
+	}
+	var out, rest []canisterPkg
+	seen := map[string]bool{}
+	for i := range resp.Data {
+		p := resp.Data[i]
+		if !p.Visible || p.Price != "Free" || seen[p.Version] {
+			continue
+		}
+		seen[p.Version] = true
+		if p.Latest {
+			out = append(out, p)
+		} else {
+			rest = append(rest, p)
+		}
+	}
+	out = append(out, rest...)
+	if len(out) == 0 {
+		return nil, fmt.Errorf("no free download found for %s", id)
+	}
+	return out, nil
+}
+
 // canisterRepoURI resolves a repository id to its base URI.
 func canisterRepoURI(ctx context.Context, client *http.Client, repoID string) (string, error) {
 	body, err := getJSON(ctx, client, canisterBase+"/repository/"+repoID)
