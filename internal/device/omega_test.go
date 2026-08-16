@@ -67,7 +67,7 @@ func TestOmegaVerdictTable(t *testing.T) {
 		{"18.5", Supported, "16-18"},
 		{"19.0", Untested, "newer than the proven"},
 		{"24.3", Untested, ""},
-		{"26.9", Untested, ""},
+		{"26.9", Supported, "live-verified"},
 		{"27.0", Unsupported, "reset your data"},
 		{"30.1", Unsupported, ""},
 	}
@@ -406,5 +406,23 @@ func TestOmegaUnknownMissingFileSendsErrorCode(t *testing.T) {
 	}
 	if err := <-serverDone; err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestOmegaLookupCleansDotSlash is the regression guard for the live iOS 26
+// finding: the device requested "./Manifest.plist" and the exact-match
+// lookup reported it missing. Cleaned names must serve the real files.
+func TestOmegaLookupCleansDotSlash(t *testing.T) {
+	b, err := buildOmegaBackup()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range []string{"./Manifest.plist", "./Status.plist", "./Info.plist", "./Manifest.mbdb", "Manifest.plist"} {
+		if b.lookup(n) == nil {
+			t.Errorf("lookup(%q) came back empty", n)
+		}
+	}
+	if b.lookup("./definitely-not-there.deb") != nil {
+		t.Error("unknown name resolved")
 	}
 }

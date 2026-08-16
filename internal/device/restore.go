@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path"
 	"strings"
 
 	"github.com/danielpaulus/go-ios/ios"
@@ -206,7 +207,11 @@ func serveOmegaFiles(frames *linkFrames, b omegaBackup, names []interface{}) err
 }
 
 // lookup serves the four manifest files and the payload blobs by name.
+// Names are cleaned first: devices have been observed (iOS 26, live) to
+// request "./Manifest.plist" — pym3's pathlib join absorbs that prefix, so
+// we do the same.
 func (b omegaBackup) lookup(name string) []byte {
+	name = path.Clean(name)
 	switch name {
 	case "Manifest.mbdb":
 		return b.mbdb

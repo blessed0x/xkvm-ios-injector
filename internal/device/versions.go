@@ -39,7 +39,10 @@ var OmegaPolicy = []struct {
 }{
 	{[2]int{0, 0}, [2]int{15, 999}, Unsupported, "Omega needs iOS 16 or higher — older iOS cannot run this restore"},
 	{[2]int{16, 0}, [2]int{18, 999}, Supported, "the range Omega was built and proven on (iOS 16-18)"},
-	{[2]int{19, 0}, [2]int{26, 999}, Untested, "newer than the proven Omega range — nobody on record has verified it here yet"},
+	{[2]int{19, 0}, [2]int{25, 999}, Untested, "newer than the proven Omega range — nobody on record has verified it here yet"},
+	// Live-verified: one full restore + reboot on iOS 26.1 (iPhone 11,
+	// arm64e) succeeded — promoted from untested.
+	{[2]int{26, 0}, [2]int{26, 999}, Supported, "live-verified on iOS 26.1: full restore + reboot succeeded"},
 	{[2]int{27, 0}, [2]int{99, 999}, Unsupported, "Omega's own hard warning: on iOS 27 the backup system changed, restores can reset your data or settings. Never run it here."},
 }
 
