@@ -206,16 +206,16 @@ func (u *UI) chooseRaw(question string, choices []Choice, multi bool) []int {
 		}
 	}
 
-	panelW := 64
-	panelHeight := 3
-	maxH := panelHeight
+	panelW := 58
+	maxH := 1
 	for _, c := range choices {
 		if h := len(panelText(c, panelW)); h > maxH {
 			maxH = h
 		}
 	}
-	// Layout: blank + title + N options + panel box (maxH+2 rules) + legend.
-	lines := 1 + 1 + len(choices) + (maxH + 2) + 1
+	// Layout: blank + title + N options + panel (top, title row, maxH text
+	// rows, bottom) + legend.
+	lines := 1 + 1 + len(choices) + (maxH + 3) + 1
 
 	render := func() {
 		var b strings.Builder
@@ -306,23 +306,30 @@ func legend(multi bool) string {
 	return "  ↑/↓ move · 1-9 jump · enter ok · q back\n"
 }
 
-// panelPad renders the fixed-height explainer box for choice c.
+// panelPad renders the fixed-height explainer box for choice c. Every row
+// is exactly the same width (body rows: "   │ " + text padded to the inner
+// width + " │"), so the box borders align no matter how a description wraps.
 func (u *UI) panelPad(c Choice, width, wantLines int) string {
-	hdr := "why this one"
-	top := "   ┌─ " + hdr + " " + strings.Repeat("─", max(0, width-len(hdr)-7)) + "┐\n"
-	body := ""
-	got := 0
-	pre := "   │ "
-	for _, ln := range panelText(c, width) {
-		pad := strings.Repeat(" ", max(0, width-len(ln)))
-		body += pre + u.paint(anWhite, ln) + pad + " │\n"
-		got++
-	}
-	for ; got < wantLines; got++ {
-		body += pre + strings.Repeat(" ", width) + " │\n"
+	top := "   ┌" + strings.Repeat("─", width+2) + "┐\n"
+	body := panelRow(u, anBold+anCyan, "why this one", width)
+	rows := panelText(c, width)
+	for i := 0; i < wantLines; i++ {
+		txt := ""
+		if i < len(rows) {
+			txt = rows[i]
+		}
+		body += panelRow(u, anWhite, txt, width)
 	}
 	bot := "   └" + strings.Repeat("─", width+2) + "┘\n"
 	return top + body + bot
+}
+
+// panelRow is one aligned panel line: fixed prefix, padded text, border.
+func panelRow(u *UI, color, txt string, width int) string {
+	if len(txt) > width {
+		txt = txt[:width]
+	}
+	return "   │ " + u.paint(color, txt) + strings.Repeat(" ", width-len(txt)) + " │\n"
 }
 
 func max(a, b int) int {

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/xscope0/xkvm-ios-injector/internal/app"
 	"github.com/xscope0/xkvm-ios-injector/internal/decrypt"
@@ -516,3 +517,39 @@ func TestPanelPadNeverNegative(t *testing.T) {
 }
 
 var _ = errors.New
+
+// TestClearScreenGating: the in-place redraw must only emit ANSI clears on a
+// real animated terminal — piped runs (tests/CI) keep a plain stream.
+func TestClearScreenGating(t *testing.T) {
+	var w bytes.Buffer
+	u := NewForTest(strings.NewReader(""), &w)
+	u.clearScreen()
+	if w.Len() != 0 {
+		t.Errorf("piped UI must not emit clears, got %q", w.String())
+	}
+	u.Animate = true
+	u.clearScreen()
+	if !strings.Contains(w.String(), "\x1b[2J") {
+		t.Errorf("animated UI must clear, got %q", w.String())
+	}
+}
+
+// TestPanelPadAlignment: every panel row must end on the same border column
+// (the paste-artifact bug: a double pipe when a desc hit the width exactly).
+func TestPanelPadAlignment(t *testing.T) {
+	u := NewForTest(strings.NewReader(""), &bytes.Buffer{})
+	wide := u.panelPad(Choice{Name: "x", Desc: strings.Repeat("word ", 99), Ex: "ex words"}, 58, 5)
+	lines := strings.Split(strings.TrimSuffix(wide, "\n"), "\n")
+	if len(lines) != 2+5+1 { // top + title + 5 body + bottom
+		t.Fatalf("panel shape wrong: %d lines\n%s", len(lines), wide)
+	}
+	want := utf8.RuneCountInString(lines[0])
+	for i, ln := range lines {
+		if n := utf8.RuneCountInString(ln); n != want {
+			t.Errorf("row %d is %d columns, want %d (border drift): %q", i, n, want, ln)
+		}
+		if i > 0 && i < len(lines)-1 && !strings.HasSuffix(ln, " │") {
+			t.Errorf("row %d missing closing border: %q", i, ln)
+		}
+	}
+}

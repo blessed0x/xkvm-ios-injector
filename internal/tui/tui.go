@@ -202,11 +202,23 @@ func (u *UI) categories() []category {
 	}
 }
 
+// clearScreen blanks the terminal so the next screen replaces the current
+// one instead of stacking under it (same feel as the intro giving way to
+// the menu). Gated on Animate: piped runs stream plain text and must never
+// emit escapes.
+func (u *UI) clearScreen() {
+	if !u.Animate {
+		return
+	}
+	fmt.Fprint(u.Out, "\x1b[2J\x1b[H")
+}
+
 // pickTool runs the two-level category → feature picker and executes the
 // chosen flow. Returns false when the user quit (or input ended) at the
 // category level; true otherwise (flows run, feature-level back stays in
 // the loop).
 func (u *UI) pickTool() bool {
+	u.clearScreen() // fresh screen for the category level (also after back)
 	cats := u.categories()
 	var catChoices []Choice
 	for _, c := range cats {
@@ -225,6 +237,7 @@ func (u *UI) pickTool() bool {
 	if fi < 0 {
 		return true // back to categories, not quit
 	}
+	u.clearScreen() // the flow's intro replaces the feature list in place
 	cat.list[fi].run()
 	return true
 }
