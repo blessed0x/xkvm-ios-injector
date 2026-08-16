@@ -45,10 +45,21 @@ func (g *GoIOS) entry(ctx context.Context, udid string) (ios.DeviceEntry, error)
 	if err != nil {
 		return ios.DeviceEntry{}, g.wrap(KindConnection, "list devices", "is usbmuxd running? (default on macOS; start it on Linux first)", err)
 	}
-	for _, d := range list.DeviceList {
-		if d.Properties.SerialNumber == udid {
-			return d, nil
+	var fallback *ios.DeviceEntry
+	for i := range list.DeviceList {
+		d := &list.DeviceList[i]
+		if d.Properties.SerialNumber != udid {
+			continue
 		}
+		if fallback == nil {
+			fallback = d
+		}
+		if d.Properties.ConnectionType == "USB" {
+			return *d, nil
+		}
+	}
+	if fallback != nil {
+		return *fallback, nil
 	}
 	return ios.DeviceEntry{}, &Error{Kind: KindNotFound, Op: "list devices", Err: fmt.Errorf("no device with UDID %q is connected", udid),
 		Remediation: "run \"xkvm device list\" to see what is attached"}
@@ -64,7 +75,7 @@ func (g *GoIOS) List(ctx context.Context) ([]Dev, error) {
 	}
 	out := make([]Dev, 0, len(list.DeviceList))
 	for _, d := range list.DeviceList {
-		out = append(out, Dev{UDID: d.Properties.SerialNumber, Transport: Transport(d.Properties.ConnectionType)})
+		out = append(out, Dev{UDID: d.Properties.SerialNumber, Transport: Transport(d.Properties.ConnectionType), Transports: []Transport{Transport(d.Properties.ConnectionType)}})
 	}
 	return out, nil
 }
@@ -226,8 +237,10 @@ func (g *GoIOS) Install(ctx context.Context, udid, path string) error {
 		return nil
 	})
 	if err != nil {
-		return g.wrap(KindInternal, "install", "on iOS 17+ the device may need a developer disk image mounted; "+
-			"otherwise check disk space and try again", err)
+		if tunnelGate(err) {
+			return g.wrap(KindNotFound, "install", tunnelRemediation, err)
+		}
+		return g.wrap(KindInternal, "install", "check disk space on the device and try again", err)
 	}
 	return nil
 }
@@ -293,6 +306,9 @@ func (g *GoIOS) Launch(ctx context.Context, udid, bundleID string, env map[strin
 		return err
 	})
 	if err != nil {
+		if tunnelGate(err) {
+			return 0, g.wrap(KindNotFound, "launch", tunnelRemediation, err)
+		}
 		return 0, g.wrap(KindNotFound, "launch", "is the bundle id installed? see \"xkvm device apps\"", err)
 	}
 	return pid, nil
@@ -315,6 +331,9 @@ func (g *GoIOS) Kill(ctx context.Context, udid string, pid uint64) error {
 		return pc.KillProcess(pid)
 	})
 	if err != nil {
+		if tunnelGate(err) {
+			return g.wrap(KindNotFound, "kill", tunnelRemediation, err)
+		}
 		return g.wrap(KindNotFound, "kill", "the process may have exited already", err)
 	}
 	return nil
@@ -327,6 +346,10 @@ func (g *GoIOS) Syslog(ctx context.Context, udid string, w io.Writer) error {
 	}
 	conn, err := syslog.New(dev)
 	if err != nil {
+		if tunnelGate(err) {
+			return g.wrap(KindNotFound, "syslog",
+				"stock iOS 17+ removed the classic syslog relay service — syslog works on\njailbroken devices and stock iOS 16 and older. Not a fault of this machine.", err)
+		}
 		return g.wrap(KindConnection, "syslog", "", err)
 	}
 	defer conn.Close()
@@ -405,3 +428,24 @@ func (g *GoIOS) run(ctx context.Context, fn func() error) error {
 func (g *GoIOS) wrap(kind ErrorKind, op, remediation string, err error) error {
 	return &Error{Kind: kind, Op: op, Remediation: remediation, Err: err}
 }
+
+// tunnelGate reports whether err is the iOS 17+ service gate: instruments
+// and the install conduit are only offered once a developer tunnel (or
+// Developer Disk Image) is active on the host.
+func tunnelGate(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	for _, sig := range []string{"needs an active tunnel", "InvalidService", "Developer Image", "Failed connecting to service", "Have you mounted"} {
+		if strings.Contains(msg, sig) {
+			return true
+		}
+	}
+	return false
+}
+
+const tunnelRemediation = "iOS 17+ gated the process-control and install services behind a developer tunnel:\n" +
+	"  go run github.com/danielpaulus/go-ios@v1.3.2 tunnel start --userspace --udid <UDID>\n" +
+	"in a second terminal, then retry. (Same prerequisite as pymobiledevice3's\n" +
+	"Developer Disk Image mount — nothing is wrong with the device.)"

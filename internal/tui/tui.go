@@ -27,6 +27,7 @@ import (
 	"github.com/xscope0/xkvm-ios-injector/internal/app"
 	"github.com/xscope0/xkvm-ios-injector/internal/cyanfile"
 	"github.com/xscope0/xkvm-ios-injector/internal/decrypt"
+	"github.com/xscope0/xkvm-ios-injector/internal/device"
 	"github.com/xscope0/xkvm-ios-injector/internal/fetch"
 	"github.com/xscope0/xkvm-ios-injector/internal/log"
 	"github.com/xscope0/xkvm-ios-injector/internal/patch"
@@ -56,6 +57,9 @@ type UI struct {
 	// FetchVersions lists the available versions of one Canister package
 	// (the arrow picker's data source). Defaults to fetch.Versions.
 	FetchVersions func(ctx context.Context, id string) ([]fetch.PkgVersion, error)
+	// Device is the device-control handler (pair/info/install/launch…).
+	// Injectable so tests can stub it; the real handler is device.New.
+	Device device.Handler
 	// CacheUsage reports the fetch cache (directory, deb count, total bytes),
 	// CachePrune removes entries older than the 7-day TTL, and CacheClear
 	// removes every entry. Injectable so tests stay off the real user cache
@@ -99,6 +103,7 @@ func New() *UI {
 		FetchPinned: func(ctx context.Context, ids, sources []string, noRecurse bool, cacheDir string, pinned map[string]string) ([]string, error) {
 			return fetch.ResolveVersion(ctx, ids, sources, noRecurse, cacheDir, nil, pinned)
 		},
+		Device: device.New(device.Options{}),
 		FetchVersions: func(ctx context.Context, id string) ([]fetch.PkgVersion, error) {
 			return fetch.Versions(ctx, id, nil)
 		},
@@ -193,6 +198,20 @@ func (u *UI) categories() []category {
 			ex: "rootful ↔ rootless ↔ roothide, plus Xina-style",
 			list: []feature{
 				{"convert", "convert one .deb between rootful / rootless / roothide / Xina layouts — byte-faithful ports of the ecosystem tools", "tweak.deb → tweak-rootless.deb (Dopamine/ellekit)", u.flowConvert},
+			},
+		},
+		{
+			name: "device", desc: "talk to a plugged-in iPhone/iPad: trust it, check it, install and run your builds on it",
+			ex: "the other half of inject: build here, install there",
+			list: []feature{
+				{"pair", "trust this computer on the phone — first run shows a Trust dialog, tap it and pair again (once per computer)", "plug in → device → pair", u.dvPair},
+				{"info", "the phone's name, iOS version, model, architecture — one screen", "device → info", u.dvInfo},
+				{"battery", "charge level and charging state", "device → battery", u.dvBattery},
+				{"apps", "browse installed apps, then launch or remove the one you pick", "device → apps → pick an app", u.dvApps},
+				{"install", "stream a built .ipa straight onto the phone (the Xcode zip-conduit)", "inject App.ipa → device → install", u.dvInstall},
+				{"launch", "start an app by bundle id and learn its pid", "device → launch com.example.app", u.dvLaunch},
+				{"kill", "stop a process by its pid (from launch or apps)", "device → kill 1234", u.dvKill},
+				{"syslog", "watch parsed device logs stream by live — Enter stops", "device → syslog", u.dvSyslog},
 			},
 		},
 		{

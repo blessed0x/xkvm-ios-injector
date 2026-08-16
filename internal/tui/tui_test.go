@@ -54,7 +54,7 @@ func TestTUIIntroAndCategories(t *testing.T) {
 }
 
 func TestTUIHelpScreen(t *testing.T) {
-	out := runUI(t, "4\n1\nq\n", nil)
+	out := runUI(t, "5\n1\nq\n", nil)
 	for _, want := range []string{
 		"help", "every menu action has a command-line twin", "xkvm -i App.ipa -f MyTweak.dylib",
 		"xkvm check -i App.ipa --fix", "fakesign signs the app",
@@ -66,7 +66,7 @@ func TestTUIHelpScreen(t *testing.T) {
 }
 
 func TestTUIAboutScreen(t *testing.T) {
-	out := runUI(t, "4\n2\nq\n", nil)
+	out := runUI(t, "5\n2\nq\n", nil)
 	for _, want := range []string{"about xkvm", "cyan / pyzule-rw", "Azule", "Derootifier"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("about screen missing %q", want)

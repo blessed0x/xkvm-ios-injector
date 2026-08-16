@@ -36,6 +36,14 @@ Flags: `--udid` (resolve ambiguity), `--network` (prefer network transports),
 
 ## 3. Workflows (data flow + error policy)
 
+**W0 field note (verified live, iOS 26.1 iPhone 11)** — one phone on
+USB + WiFi appears twice from usbmuxd with the same UDID; `Distinct` counts
+UDIDs, prefers USB, and every transport rides along for display
+(`USB+Network`). launch/kill/install on stock iOS 17+ hit the developer
+tunnel gate (upstream error classes mapped to a precise remediation
+command); syslog relay is unavailable on stock iOS 17+; pair/info/battery/
+apps need no tunnel.
+
 **W1 list/resolve** — usbmuxd → `DeviceList{DeviceList []DeviceEntry}`;
 `DeviceEntry.Properties.SerialNumber` is the UDID, `ConnectionType` is
 "USB"/"Network". UDID absent + exactly one device = fast path; zero =

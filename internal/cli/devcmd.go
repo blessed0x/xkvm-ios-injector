@@ -78,13 +78,18 @@ When more than one device is connected, pick one with --udid.`,
 			if err != nil {
 				return err
 			}
+			devs = device.Distinct(devs)
 			return printJSONOr(cmd, showJSON, devs, func() error {
 				if len(devs) == 0 {
 					fmt.Fprintln(cmd.OutOrStdout(), "no devices connected")
 					return nil
 				}
 				for _, d := range devs {
-					fmt.Fprintf(cmd.OutOrStdout(), "%s  %s\n", d.UDID, d.Transport)
+					trans := make([]string, 0, len(d.Transports))
+					for _, tr := range d.Transports {
+						trans = append(trans, string(tr))
+					}
+					fmt.Fprintf(cmd.OutOrStdout(), "%s  %s\n", d.UDID, strings.Join(trans, "+"))
 				}
 				return nil
 			})

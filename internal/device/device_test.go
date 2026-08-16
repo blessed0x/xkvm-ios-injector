@@ -266,3 +266,46 @@ func TestBatchOfOps(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// TestResolveSameUDIDTwoTransportsIsOneDevice — the bug from the field:
+// usbmuxd lists one phone twice (USB + Network); that must count as ONE
+// device, resolved without --udid, USB preferred.
+func TestResolveSameUDIDTwoTransportsIsOneDevice(t *testing.T) {
+	f := &fake{lists: [][]Dev{{
+		{UDID: "AAAA", Transport: TransportNetwork},
+		{UDID: "AAAA", Transport: TransportUSB},
+	}}}
+	d, err := Resolve(context.Background(), f, "")
+	if err != nil {
+		t.Fatalf("one phone on two transports must resolve without --udid: %v", err)
+	}
+	if d.UDID != "AAAA" || d.Transport != TransportUSB {
+		t.Errorf("want the USB face, got %+v", d)
+	}
+}
+
+func TestResolveDistinctUDIDsStillAmbiguous(t *testing.T) {
+	f := &fake{lists: [][]Dev{{
+		{UDID: "AAAA", Transport: TransportUSB},
+		{UDID: "AAAA", Transport: TransportNetwork},
+		{UDID: "BBBB", Transport: TransportUSB},
+	}}}
+	_, err := Resolve(context.Background(), f, "")
+	if err == nil || !strings.Contains(err.Error(), "2 devices are connected") {
+		t.Fatalf("two real phones must stay ambiguous: %v", err)
+	}
+	if !strings.Contains(err.Error(), "BBBB") || strings.Count(err.Error(), "AAAA") > 1 {
+		t.Errorf("candidates should be one row per phone: %v", err)
+	}
+}
+
+func TestDistinctOrderStableAndDedupe(t *testing.T) {
+	got := Distinct([]Dev{
+		{UDID: "B", Transport: TransportUSB},
+		{UDID: "A", Transport: TransportNetwork},
+		{UDID: "B", Transport: TransportNetwork},
+	})
+	if len(got) != 2 || got[0].UDID != "B" || got[0].Transport != TransportUSB || got[1].UDID != "A" {
+		t.Errorf("distinct wrong: %+v", got)
+	}
+}

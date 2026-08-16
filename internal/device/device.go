@@ -24,8 +24,9 @@ const (
 
 // Dev is the xkvm-facing view of a connected device.
 type Dev struct {
-	UDID      string    // Properties.SerialNumber in usbmuxd terms
-	Transport Transport // USB or Network
+	UDID       string      // Properties.SerialNumber in usbmuxd terms
+	Transport  Transport   // preferred transport (USB wins when both exist)
+	Transports []Transport // every transport the device is reachable over
 }
 
 // Info is the lockdown value subset worth printing.
@@ -146,14 +147,61 @@ type Handler interface {
 	Shutdown(ctx context.Context, udid string) error
 }
 
+// Distinct collapses the raw muxd list: usbmuxd reports the SAME physical
+// device once per transport (USB and Network share a UDID), so the unit of
+// "how many devices" is the UDID, not the transport row. Each result keeps
+// every transport it was seen on; the preferred one (USB wins) is in
+// Transport.
+func Distinct(devs []Dev) []Dev {
+	type acc struct {
+		all    []Dev
+		hasUSB bool
+	}
+	byUDID := make(map[string]*acc, len(devs))
+	var order []string
+	for _, d := range devs {
+		if a, ok := byUDID[d.UDID]; ok {
+			a.all = append(a.all, d)
+			a.hasUSB = a.hasUSB || d.Transport == TransportUSB
+			continue
+		}
+		byUDID[d.UDID] = &acc{all: []Dev{d}, hasUSB: d.Transport == TransportUSB}
+		order = append(order, d.UDID)
+	}
+	out := make([]Dev, 0, len(order))
+	for _, udid := range order {
+		a := byUDID[udid]
+		trans := make([]Transport, 0, len(a.all))
+		for _, d := range a.all {
+			trans = append(trans, d.Transport)
+		}
+		out = append(out, Dev{UDID: udid, Transport: preferredTransport(a.all, a.hasUSB), Transports: trans})
+	}
+	return out
+}
+
+// preferredTransport picks USB unless the device is only reachable over the
+// network (pairing and the zip-conduit are happiest over the cable).
+func preferredTransport(all []Dev, hasUSB bool) Transport {
+	if hasUSB {
+		return TransportUSB
+	}
+	if len(all) > 0 {
+		return all[0].Transport
+	}
+	return TransportUSB
+}
+
 // Resolve picks the device an operation should target: an explicit UDID
-// wins, otherwise there must be exactly one attached device. Ambiguity is
-// an error listing the candidates — resolution must never guess.
+// wins, otherwise there must be exactly one attached device (same UDID on
+// USB + Network counts once). Ambiguity is an error listing the candidates
+// — resolution must never guess.
 func Resolve(ctx context.Context, h Handler, udid string) (Dev, error) {
 	devs, err := h.List(ctx)
 	if err != nil {
 		return Dev{}, fmt.Errorf("listing devices: %w", err)
 	}
+	devs = Distinct(devs)
 	if len(devs) == 0 {
 		return Dev{}, &Error{Kind: KindNotFound, Op: "list devices",
 			Remediation: "no iOS device is connected. Check that:\n" +

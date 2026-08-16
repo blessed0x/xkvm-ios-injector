@@ -210,7 +210,16 @@ xkvm device syslog                # parsed logs, Ctrl-C to stop
 install it with `device`, watch its logs with `device syslog` — no
 SideStore or Xcode. Backed by [go-ios](https://github.com/danielpaulus/go-ios)
 (the same pure-Go talk-to-Apple stack as the Mach-O tooling). See
-[docs/device-control.md](docs/device-control.md) for the full surface.
+[docs/device-control.md](docs/device-control.md) for the full surface. The
+same control surface is in the TUI under the `device` category — pair,
+info, battery, apps (launch/uninstall the picked app), install, launch
+by bundle id, kill by pid, and a live syslog screen.
+
+Note for iOS 17+: `launch`/`kill`/`install` need a developer tunnel the
+same way pymobiledevice3 needs a mounted Developer Disk Image; xkvm tells
+you the exact command when it hits that gate. `pair`/`info`/`battery`/
+`apps` work without it, and one physical phone showing up on both USB and
+WiFi counts as one device.
 
 ## Common options
 
