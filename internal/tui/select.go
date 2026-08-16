@@ -311,7 +311,7 @@ func legend(multi bool) string {
 // width + " │"), so the box borders align no matter how a description wraps.
 func (u *UI) panelPad(c Choice, width, wantLines int) string {
 	top := "   ┌" + strings.Repeat("─", width+2) + "┐\n"
-	body := panelRow(u, anBold+cCyan, "why this one", width)
+	body := panelRow(u, cWhite, "why this one", width)
 	rows := panelText(c, width)
 	for i := 0; i < wantLines; i++ {
 		txt := ""
