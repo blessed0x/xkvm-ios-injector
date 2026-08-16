@@ -50,8 +50,8 @@ points — no separate code path, so the TUI can't drift from the CLI.
 | CI | GitHub Actions: lint job (`make lint`) + test matrix (macOS 14 arm64, Ubuntu x64, Windows x64) |
 | Gate | `make qa` = `make lint` + `go test -race ./...` + 6-combo cross-compile |
 
-**Current HEAD:** `8fc61d0` — "xkvm: bump Go 1.26.6, pin tools via go.mod
-tool directive, add govulncheck to CI" (pushed; tree clean).
+**Current HEAD:** `5e9f4d1` — "xkvm: add goreleaser release workflow on tags"
+(pushed; tree clean).
 
 ## 3. Command surface
 
@@ -259,7 +259,7 @@ must follow the strip-edit-resign discipline (extract ents → remove sig → ed
 
 ## 8. Current state (2026-08-16) — read this before starting work
 
-**HEAD `8fc61d0` is pushed and the tree is clean.** Two batches landed after
+**HEAD `5e9f4d1` is pushed and the tree is clean.** Three batches landed after
 `d3da30d`:
 
 - `7b7e373` — `xkvm decrypt` (App Store ipatool flow): M5 §5.7 contract in
@@ -271,6 +271,13 @@ must follow the strip-edit-resign discipline (extract ents → remove sig → ed
   `tool` directive (`tools.go` deleted), `make lint`/`make qa`/CI updated,
   `sort.Slice` → `slices.SortFunc`, named struct types in
   `internal/macho/cstring.go`.
+- `5e9f4d1` — release pipeline: `.github/workflows/release.yml` fires on
+  `v*` tags (goreleaser builds the six combos, injects the tag into
+  `xkvm --version` via `-X internal/app.Version`, publishes the assets the
+  one-shot installers expect). `app.Version` is now a `var` for that reason;
+  asset naming and the installers are one contract — change them in lockstep.
+  To cut a release: `git tag v0.1.0 && git push origin v0.1.0` (see
+  CONTRIBUTING.md "Cutting a release").
 
 - **Verified 2026-08-16:** `make qa` fully green — lint (gofmt/vet/tidy/staticcheck/
   govulncheck; govulncheck: **no vulnerabilities found**) + `-race` suite across
@@ -280,9 +287,6 @@ must follow the strip-edit-resign discipline (extract ents → remove sig → ed
   no Apple ID exists on this dev machine. Apple's auth is unstable upstream
   too. If live auth fails, the likely first place to look is cookies from
   intermediate redirect hops (Go captures only the final response's cookies).
-- **Natural next steps:** add the goreleaser release workflow so the one-shot
-  installers' release path becomes real (no release exists yet; installers fall
-  back to `go install`).
 
 ## 9. Build / test / QA
 
