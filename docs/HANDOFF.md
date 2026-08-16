@@ -90,14 +90,23 @@ id/minOS), `-k/--icon`, `-l` (plist merge), `-x` (entitlements), `-u -w -d`
 ### TUI menu map
 
 ```
- 1 inject   2 extract   3 convert   4 build   5 check   6 help   7 about
- 8 fetch    9 cache    10 decrypt
+ apps    inject · check · decrypt
+ tweaks  extract · fetch · build · cache
+ convert convert (rootful/rootless/roothide/Xina)
+ info    help · about
 ```
 
-Each flow is a `flowXxx` method in `internal/tui/tui.go` driving the same
-`internal/app` functions the CLI uses. Empty answer = back to menu (twice =
-abort), `q/quit/exit` anywhere = quit. When stdin is piped, animation/color
-turn off and the menu reads lines — CI and tests drive it that way.
+Two-level category browser: arrow keys move (↑/↓ or j/k), 1-9 jumps, enter
+picks, q backs out. Every option explains itself in a "why this one" panel
+while highlighted (what it does + a short example), and every CLI flag is
+reachable — the inject flow exposes the full root-flag surface, fetch has a
+per-tweak version picker, debify/cgen expose their extras, convert asks
+thin/tweakinject/pkgmirror/mode. Each flow is a `flowXxx` method in
+`internal/tui/tui.go` driving the same `internal/app` functions the CLI
+uses. When stdin is piped (CI, tests), colors/animation/raw mode turn off
+and the pickers read a line protocol: numbers or names for lists,
+space-separated `N`/`!N` tokens for multi-selects, blank uses the defaults,
+`q` cancels.
 
 ## 4. Architecture map (package by package)
 

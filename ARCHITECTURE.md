@@ -340,25 +340,45 @@ A dependency-free interactive menu that drives the **same** `internal/app` entry
 points the flags use — no separate code path, so the TUI can't drift from the
 CLI. Design decisions:
 
-- **Zero dependencies.** ANSI 16-color codes (basic colors work in every
-  terminal) + block characters (`▏▎▍…█` spinner, `█░` grow bar). No tcell,
-  no bubbletea, no `golang.org/x/term` — `isTerminal` is a `ModeCharDevice`
-  stat check. This keeps the single-static-binary story intact.
-- **Pipable.** When stdin isn't a terminal, animation and color turn off
-  (`NO_COLOR` respected) and the menu reads lines from the pipe — so CI and
-  scripts can drive it, and tests feed it `bufio` input directly
-  (`NewForTest` + an injectable `Run`).
+- **Full parity, categorized.** The flat menu became a two-level category
+  browser (apps / tweaks / convert / info); every CLI feature lives in one of
+  the categories, and every expert flag is reachable too: runInject covers
+  the whole root-flag surface (`.cyan` recipes, per-value customizations,
+  the dynamic `internal/patch` registry, compression 0-9, per-dylib
+  `--root-dylib` placement), debify/cgen expose `--bundle-id`/`--resource`/
+  `--depends`, `-n`, `-s`, `--ellekit`, `--patch <name>`/`--root-dylib`
+  respectively, convert asks thin/tweakinject/pkgmirror/mode, check asks
+  fix-dir/no-fetch/auto-yes, fetch asks apt-sources, dependency recursion
+  **and the per-tweak version**.
+- **Arrow-key pickers, dependency-free.** `select.go` renders highlightable
+  lists (↑/↓, 1-9 jump, space toggles, enter confirms, q backs out) with a
+  fixed-height "why this one" panel that explains + examples the highlighted
+  option (the teach-why pattern). Raw mode is a build-tagged ioctl
+  (`input_darwin.go` TIOCGETA / `input_linux.go` TCGETS / `input_windows.go`
+  no-op) — still no tcell/bubbletea/x/term.
+- **Version picker.** Fetch lists Canister versions per tweak
+  (`fetch.Versions`) and pins the choice through `fetch.ResolveVersion`
+  (resolver gains a `pinned` map consulted in `locate`; bogus pins name the
+  available versions).
+- **Pipable.** When stdin isn't a terminal, animation/color/raw mode turn off
+  ( `NO_COLOR` respected) and the pickers degrade to a determined line
+  protocol (number/name/prefix for lists; `N`/`!N` tokens for multi-selects),
+  so CI and scripts can drive everything and tests feed `bufio` input
+  directly (`NewForTest`, injectable `Run`/`Fetch*`/`Cache*`/`Decrypt*`).
 - **Log capture.** Each operation redirects the `internal/log` writers into a
   buffer (`captureLogs`), runs the spinner, then renders a "what happened"
   panel — the user sees the exact same `[*]`/`[?]`/`[!]` lines the CLI emits.
 - **Error surfacing.** A plain returned error (nothing logged) is folded into
   the panel so failures always say why.
-- **Sensible defaults.** Inject defaults `--fakesign` on (every sideload path
-  needs a signature) and asks about `--patch` in plain words.
+- **Sensible defaults.** Inject preselects `--fakesign` + `--overwrite`
+  (toggleable), compression defaults to 6, fetch version picker preselects
+  latest.
 
-Coverage: `internal/tui/tui_test.go` pipes menu input through the full loop
-(help/about screens, inject dispatch incl. options wiring, error path, bad
-choice, quit) and is in the CI verbose step.
+Coverage: `internal/tui/tui_test.go` pipes the line protocol through the full
+loop (intro/categories, help/about, inject dispatch incl. customization +
+expert-toggle wiring, cancel paths, extract/convert/build/check/cache/decrypt
+flows, fetch version pinning + handover, picker protocol units) and is in the
+CI verbose step.
 
 ### 5.3 Compatibility-patch registry (xkvm-native extension point)
 
