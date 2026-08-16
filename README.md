@@ -171,6 +171,14 @@ xkvm debify   -i MyTweak.dylib -o MyTweak.deb     # .dylib → .deb
 xkvm -i App.ipa -o Patched.ipa --fetch com.example.tweak
 ```
 
+**Download an app from the App Store by Apple ID** (the ipatool / PancakeStore flow):
+
+```bash
+xkvm decrypt 310633997 --apple-id you@example.com --password …   # latest version
+xkvm decrypt https://apps.apple.com/us/app/…/id310633997          # …or a link or bundle id
+xkvm decrypt --logout                                            # forget the saved login
+```
+
 ## Commands
 
 | Command | What it does |
@@ -185,6 +193,7 @@ xkvm -i App.ipa -o Patched.ipa --fetch com.example.tweak
 | `check` | Verify bundle-relative dependencies resolve (merge completeness) |
 | `cyan-check` | Validate a `.cyan` config file before applying it |
 | `cgen` | Turn your flags into a shareable `.cyan` config file |
+| `decrypt` | Download an App Store app by Apple ID (with sinfs + metadata) for tweaking |
 
 ## Common options
 
@@ -212,8 +221,10 @@ Run `xkvm --help` for the complete list.
 ## Documentation
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) — design, milestones, and fidelity notes
+- [docs/HANDOFF.md](docs/HANDOFF.md) — handoff doc: full architecture + current state, for a new agent/session
 - [docs/ellekit-build.md](docs/ellekit-build.md) — building ElleKit for injection
 - [docs/roothide-install.md](docs/roothide-install.md) — installing converted packages on a roothide jailbreak
+- [docs/self-improve-protocol.md](docs/self-improve-protocol.md) — the static + dynamic bug-hunting and code-cleanup loop
 - [feather-ellekit-spec.md](feather-ellekit-spec.md) — Feather-style ElleKit integration spec
 
 ## Project status

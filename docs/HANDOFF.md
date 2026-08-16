@@ -1,0 +1,321 @@
+# xkvm — Handoff Document
+
+**Purpose of this file:** bring a new agent/session up to speed on the xkvm
+project without re-reading the whole tree. Read this first, then follow the
+links. Last updated: 2026-08-15.
+
+---
+
+## 1. What xkvm is (one paragraph)
+
+xkvm is a **command-line tool for sideloading iOS apps and tweaking them with
+jailbreak tweaks**, written entirely in Go. Give it an app (`.ipa`, `.tipa`,
+`.app`) and a tweak (`.dylib`, `.deb`, framework, bundle, or a repo package
+id), and it handles the error-prone parts: wiring the tweak into the Mach-O
+binary with correct load commands, re-signing everything so the app still
+installs, and repacking the container. It also **extracts** tweaks back out of
+modified apps (remembering where each one lived so re-injection is automatic),
+**converts** jailbreak packages between the rootful / rootless / roothide
+conventions (and `.deb` ↔ `.dylib`), **fetches** tweaks by bundle id from Cydia
+repos (Canister / MobileAPT) with dependency recursion, **checks** an app for
+missing files that would crash it at launch (and can auto-fix them), and
+**decrypts** App Store downloads by Apple ID (the ipatool/PancakeStore flow).
+
+It is a from-scratch Go rewrite that merges **pyzule-rw / cyan** (the
+actively-maintained Python tweak injector — its author famously asked for a
+rewrite in a compiled language) with the missing features of the **archived
+Azule** tool (repo-based fetching, App Store decrypt). The repo is
+`github.com/xscope0/xkvm-ios-injector`; the binary is `xkvm`.
+
+**Two surfaces, one engine.** The `xkvm` root command is the flag-driven CLI
+(for scripted/batch use and AI agents). `xkvm tui` (also bare `xkvm` when no
+flags are given) is a dependency-free interactive menu that asks the same
+questions in plain words and drives the **exact same** `internal/app` entry
+points — no separate code path, so the TUI can't drift from the CLI.
+
+## 2. Quick facts
+
+| Fact | Value |
+|---|---|
+| Module path | `github.com/xscope0/xkvm-ios-injector` |
+| Language / Go version | Go 1.26.6 (go.mod; staticcheck + govulncheck pinned via the tool directive) |
+| Binary | `xkvm` (single static binary; builds darwin/linux/windows × arm64/amd64) |
+| CLI framework | `spf13/cobra` |
+| Mach-O | `github.com/blacktop/go-macho` v1.1.282 + `pkg/codesign` (pure Go, no ldid/insert_dylib/otool) |
+| Plist | `howett.net/plist` |
+| Compressors | stdlib zip/tar/gzip + `klauspost/compress` (zstd), `ulikunitz/xz`, `dsnet/compress` (bzip2) |
+| Icon images | stdlib `image/png` + `golang.org/x/image` |
+| License | MIT (`LICENSE`); third-party embed provenance in `NOTICE` |
+| Primary platform | macOS (heavy lifting is pure Go; macOS-14 CI leg runs the native-toolchain tests) |
+| CI | GitHub Actions: lint job (`make lint`) + test matrix (macOS 14 arm64, Ubuntu x64, Windows x64) |
+| Gate | `make qa` = `make lint` + `go test -race ./...` + 6-combo cross-compile |
+
+**Current HEAD:** `d3da30d` — "xkvm: check --fix auto-resolver + TUI wiring, and
+bare xkvm opens the menu" (pushed; working tree carries uncommitted work — see
+§8).
+
+## 3. Command surface
+
+Root: `xkvm [flags] -i <app>` (inject). Every other verb is a subcommand.
+
+| Command | What it does |
+|---|---|
+| `xkvm -i App.ipa -o Out.ipa -f Tweak.dylib ...` | **Inject** tweaks into an app (dylibs, debs, frameworks, bundles, `.cyan` configs) and re-sign |
+| `xkvm tui` (or bare `xkvm`) | **Menu mode** — asks questions in plain words |
+| `xkvm extract -i App.ipa -o dir/` | Pull tweaks out of an app; writes `xkvm-manifest.json` recording original placement |
+| `xkvm check -i App.ipa [--fix -o Out.ipa]` | Merge-completeness check: every bundle-relative dep must resolve; `--fix` auto-repairs from a fix-dir / deb / cache / online repos |
+| `xkvm rootless -i rootful.deb -o rootless.deb [--xina] [--tweakinject] [--thin]` | rootful → rootless conversion (standard, Xina-style, or Derootifier TweakInject-style) |
+| `xkvm rootful -i rootless.deb -o rootful.deb` | rootless → rootful (inverse of the above) |
+| `xkvm roothide -i rootless.deb -o roothide.deb [--pkgmirror] [--mode auto\|dynamic]` | rootless → roothide (RootHidePatcher semantics) |
+| `xkvm debify -i Tweak.dylib -o Tweak.deb` | Build a MobileSubstrate `.deb` from a dylib or payload dir |
+| `xkvm undeb -i Tweak.deb -o dir/` | Unpack a `.deb` into its tweak artifacts (with placement manifest) |
+| `xkvm cgen -o out.cyan [-f tweak ...]` | Generate a shareable `.cyan` config from flags |
+| `xkvm cyan-check <file.cyan>...` | Validate `.cyan` configs without applying (exit 1 on errors) |
+| `xkvm fetch`-equivalent | **Folded into inject**: `-f <repo-package-id> --fetch` resolves through Canister/MobileAPT (M4) |
+| `xkvm cache [--clear]` | Show or empty the persistent fetch cache (`~/Library/Caches/xkvm/fetch`, 7-day TTL) |
+| `xkvm decrypt <app-id\|app-store-url\|bundle-id>` | Download an App Store app by Apple ID (bag → auth → buy → sinfs + metadata) |
+
+### Key root flags (inject)
+
+`-i/--input`, `-o/--output`, `-f/--file` (repeatable), `-z/--cyan` (repeatable
+configs), `--fetch <bundle-id>`, `-A/--apt-source` (extra repos),
+`--no-recurse`, `-s/--fakesign`, `--patch` (inject bundled sideload-repair
+dylib set; implies fakesign), `--ellekit` (real ElleKit runtime + framework),
+`--root-dylib` (place dylib at app root with `@executable_path` instead of
+Frameworks/`@rpath`), `--liquid-glass` / `--liquid-glass-compat` /
+`--force-fullscreen` (compatibility patches), `-n -v -b -m` (name/version/bundle
+id/minOS), `-k/--icon`, `-l` (plist merge), `-x` (entitlements), `-u -w -d`
+(uisd/no-watch/documents), `-q` (thin), `-e -g` (extensions), `-c 0..9`
+(compress level), `--ignore-encrypted`, `--overwrite`.
+
+### TUI menu map
+
+```
+ 1 inject   2 extract   3 convert   4 build   5 check   6 help   7 about
+ 8 fetch    9 cache    10 decrypt
+```
+
+Each flow is a `flowXxx` method in `internal/tui/tui.go` driving the same
+`internal/app` functions the CLI uses. Empty answer = back to menu (twice =
+abort), `q/quit/exit` anywhere = quit. When stdin is piped, animation/color
+turn off and the menu reads lines — CI and tests drive it that way.
+
+## 4. Architecture map (package by package)
+
+```
+cmd/xkvm/main.go            cobra root; delegates to internal/cli
+internal/cli/               cobra commands + all flag binding (sorted patch
+                            registration), completion, exit codes
+internal/app/               pipeline orchestrator: Run (inject), ExtractArtifacts,
+                            CheckAndFix, decrypt orchestration, package cmds
+internal/tui/               dependency-free menu (ANSI, pipable), injectable
+                            Run for tests; log capture + "what happened" panel
+internal/ipa/               zip extract/repack, compression levels, hidden-entry
+                            exclusion, zip-slip-safe extraction
+internal/deb/               ar parser (hand-rolled ~60 lines) + data.tar.{gz,xz,
+                            zst,bz2,lzma} extraction; Build/Unpack (both tars)
+internal/plist/             howett wrappers: name/version/bundleid/minOS/uisd/
+                            documents/merge; xml1 conversion port (plutil)
+internal/macho/             the binary seam — PURE GO (M3), no embedded tools:
+  bin.go                      Bin surface (RemoveSignature, Fakesign, deps, ...)
+  native.go                   go-macho/pkg/codesign ops (≈ insert_dylib/ldid/
+                              otool/lipo); growing-rename (ChangeDependency/
+                              SetInstallName); serializeTOC rpath self-align fix
+  der.go                      entitlements DER encoder for ad-hoc signing
+  cstring.go                  __TEXT.__cstring dlopen-string rewrite (in-place +
+                              growing via new __PATCH_ROOTLESS segment)
+  sdk26.go                    LC_BUILD_VERSION.sdk → 26.0 (Liquid Glass patch)
+internal/inject/            per-app injection: placement (Frameworks/root/PlugIns),
+                            @rpath vs @executable_path contracts, dep fixing,
+                            root-dylib support, placement-memory restore
+internal/rootless/          package converters (all upstream-faithful):
+  rootless.go                 rootful→rootless (rootless-patcher semantics)
+  rootful.go                  rootless→rootful (inverse)
+  roothide.go                 rootless→roothide (RootHidePatcher semantics,
+                              incl. pkgmirror + AutoPatches .roothidepatch)
+  xina.go                     Xina-style rootless (byte-level NUL seds)
+  script_rootless.go          token-based DEBIAN-script path conversion
+  sandy_golden_test.go        libSandy plist rewrite pinned on real fixtures
+internal/patch/             compatibility-patch registry (feather-style):
+                            force-fullscreen, liquid-glass, liquid-glass-compat;
+                            Register() in init() + sorted flag binding
+internal/fetch/             Canister v4 client + MobileAPT Packages parser +
+                            dependency recursion + smart solver + persistent
+                            versioned cache (7-day TTL) + default repo sweep
+                            (repos.go, ~113 active repos)
+internal/cyanfile/          .cyan zip config parse/generate/validate (upstream
+                            shape + xkvm root_dylibs extension)
+internal/decrypt/           App Store download flow (PancakeStore IPATool.swift
+                            port): GUID, bag, authenticate (2FA detection,
+                            pod-follow), buy, sinf+iTunesMetadata rewriting,
+                            session persistence (0600), output-path prefs
+internal/artifact/          shared collector + xkvm-manifest.json (placement
+                            memory for extract→re-inject)
+internal/appbundle/         app-bundle ops: extensions, icon (incl. CgBI PNG
+                            decoder), check tiers, fakesign-all
+internal/extras/            go:embed payload: hooking frameworks (ElleKit,
+                            Cephei, CydiaSubstrate, Orion) + sideload-fix
+                            dylibs (zxPluginsInject, Sideloadbypass*,
+                            sideloadKeychainFix, ...)
+internal/log/               [*]/[?]/[!]/[<] formatter, --silent, capture for TUI
+internal/testutil/          fixtures + SkipUnlessNativeToolchain gate
+```
+
+## 5. Core pipeline (inject)
+
+```
+validate inputs
+extract/copy app (.ipa → zip, .tipa, .app)
+encryption check on main executable (--ignore-encrypted overrides)
+parse .cyan config(s) → merge into args (validated first — apply-flow hook)
+fetch stage: resolve -f entries that are repo bundle ids → debs (M4, recursive)
+extract .debs (ar + data.tar.*) → collect dylib/framework/appex/bundle
+fix common dependencies (substrate→ElleKit, orion, cephei*)
+auto-inject missing hooking frameworks from extras/
+inject: dylib/framework → Frameworks (@rpath), --root-dylib or manifest-root →
+        app root (@executable_path), appex → PlugIns, other → app root
+apply plist ops (name/version/bundleid/minOS/merge/uisd/documents)
+apply compatibility patches (internal/patch registry — before fakesign)
+change icon (120/152px + CFBundleIcons, CgBI decode)
+mass fakesign all binaries (or thin to arm64)
+repack .ipa (compression level, exclude hidden files) | emit .app
+auto-warn on missing bundle-relative deps (the check tiers)
+```
+
+## 6. Fidelity & correctness conventions (important for any new work)
+
+- **Pure-Go, native-only.** The M2 embedded toolchain was deleted. All Mach-O
+  work goes through go-macho / pkg/codesign; macOS validates the signatures.
+  The only `go:embed` left is the extras payload (content, not tooling).
+- **Upstream-faithful converters.** rootless/roothide/xina are ports of the
+  ecosystem's own tools (rootless-patcher, RootHidePatcher, Xinam1ne). Golden
+  tests pin them **byte-for-byte against upstream output**; deliberate
+  deviations are documented in ARCHITECTURE.md (e.g. Apple `/usr/lib` families
+  blacklisted from rewriting; gzip instead of zstd for roothide output).
+- **Placement memory.** `xkvm extract` writes `xkvm-manifest.json`; re-injecting
+  those files honors it automatically (root dylibs get `@executable_path`
+  without any flag). This is what makes extract→re-inject round-trips of
+  real-world tweak sets (e.g. the Regram family) work.
+- **Test style.** Every behavior change ships with a test. House style:
+  golden/byte-identical tests vs upstream, hermetic httptest for network
+  (Canister/MobileAPT/decrypt), `SkipUnlessNativeToolchain` for tests that
+  compile Mach-Os, `-race` in CI. Full suite is green across all 18 packages.
+- **Self-improve protocol.** `docs/self-improve-protocol.md` (committed-when-pushed;
+  currently in the working tree) + `make qa` is the standard pre-commit gate.
+  Staticcheck and govulncheck are pinned in go.mod via the `tool` directive; `make lint` runs both with zero
+  extra installs.
+- **Anti-slop writing.** Docs/help text are plain-language; no emoji, no
+  marketing fluff (the repo references jalaalrd/anti-ai-slop-writing for style).
+- **No destructive surprises.** `check --fix` writes a fixed copy, never mutates
+  the input. The fetch cache prunes only the default cache dir (never a
+  caller-supplied folder).
+
+## 7. Key subsystems worth knowing before touching
+
+### 7.1 The binary seam: `internal/macho`
+`Bin` is the surface (RemoveSignature, Fakesign, ChangeDependency,
+SetInstallName, AddRpath/RemoveRpath, ListDependencies, IsEncrypted, inject).
+Two subtle pieces you must not break:
+
+- **Growing-rename machinery:** changing a load-command dependency to a *longer*
+  string grows the Mach-O and shifts `__LINKEDIT` — handled by re-serializing
+  and re-offsetting every linkedit-referencing load command. Byte-identical
+  tests pin the rpath serializer (the self-align fix against otool on a
+  synthetic 32-bit fixture).
+- **`__cstring` rewrite (`cstring.go`):** runtime dlopen strings compiled into
+  `__TEXT` are rewritten too — in-place when they shrink/fit, otherwise packed
+  into a new `__PATCH_ROOTLESS,__cstring` segment inserted before `__LINKEDIT`
+  with ADRP/ADD/ADR instruction retargeting. Runtime-proofed by loading a
+  converted dylib via dyld and asserting dlerror names the new path.
+
+### 7.2 `xkvm check` — merge-completeness (two tiers)
+- **Tier 1 (deterministic):** every bundle-relative load-command dep
+  (`@rpath/`, `@executable_path/`, `@loader_path/`) must resolve inside the
+  bundle; Swift shims and system paths exempt.
+- **Tier 2 (heuristic):** bare `NAME.framework` tokens in the strings of
+  **non-main** binaries — the runtime-`dlopen` signature (RyukGram's settings
+  UI dlopen'ing `ffmpegkit.framework` is the canonical case). Reachability is
+  scoped by tweak family (the `.bundle`/`.appex`/root-`<Name>.dylib` stem).
+  Findings are marked `Suspected`.
+- `check --fix` searches a fix-dir / local debs / the fetch cache / online
+  repos for the missing piece, installs it in the right place, re-signs, and
+  writes a fixed copy.
+
+### 7.3 `internal/decrypt` (uncommitted — see §8)
+Port of PancakeStore's `MuffinStoreJailed/Functions/IPATool.swift` (itself
+ipatool-derived). Steps, each hermetic-httptest-pinned: GUID → bag.xml →
+authenticate (2FA = `ErrTwoFactor`, pod-follow "russia fix", trailing-slash
+"brazil fix") → buy endpoint (session headers + cookies) → zip download with
+`iTunesMetadata.plist` + `SC_Info/` sinfs. **Boundary (documented in help):**
+the binary stays FairPlay-encrypted; real Mach-O decryption needs a jailbroken
+device. Auth persists to `~/Library/Application Support/xkvm/auth.json` (0600,
+plaintext password — treat like `~/.ssh`). The TUI shows a 1/2/3 output-path
+question (ask/reuse/never) and a session menu (keep / change account / logout).
+
+### 7.4 `internal/patch` registry
+Adding a compatibility patch is one `init()` registration + `Name()`/`Apply()`;
+the CLI binds `--<name>` flags automatically (sorted). Mach-O-touching patches
+must follow the strip-edit-resign discipline (extract ents → remove sig → edit
+→ sign with ents). Mutual exclusivity lives in `Options.validate()`.
+
+## 8. Current state (2026-08-15) — read this before starting work
+
+**HEAD `d3da30d` is pushed** ("check --fix auto-resolver + TUI wiring, and bare
+xkvm opens the menu"). **The working tree has uncommitted work** — the full
+decrypt feature landed after the last push:
+
+```
+ M ARCHITECTURE.md              ← M5 §5.7 decrypt contract (spec-first) added
+ M Makefile                     ← `make qa` target added
+ M README.md                    ← decrypt command docs + protocol link
+ M internal/cli/cli.go          ← `xkvm decrypt` command registered
+ M internal/cli/cli_test.go     ← CLI wiring tests
+ M internal/tui/tui.go          ← menu 10 decrypt flow + session menu + requirements note
+ M internal/tui/tui_test.go     ← TUI decrypt-flow tests (keep/change/logout/never/reuse)
+?? docs/self-improve-protocol.md ← the QA protocol doc (not yet committed)
+?? internal/app/decrypt.go      ← decrypt orchestration
+?? internal/decrypt/            ← the whole decrypt package (client/auth/download/resolve/util + tests)
+```
+
+- All 18 packages pass `go test ./...` locally (verified 2026-08-15); `make qa`
+  was green before the last change. CI has not seen the decrypt batch.
+- **What's verified:** the decrypt flow is hermetic-httptest-pinned (16 tests:
+  GUID golden, auth success/2FA/pod-redirect/brazil-fix/rejection, buy headers,
+  end-to-end zip with entry-by-entry assertions, resolve, auth/prefs
+  persistence, TUI flows, CLI wiring). A nil-interface `SinfPaths` panic was
+  caught and fixed with a regression test.
+- **What's NOT verified (only a real login can prove it):** live Apple auth —
+  no Apple ID exists on this dev machine. Apple's auth is unstable upstream
+  too. If live auth fails, the likely first place to look is cookies from
+  intermediate redirect hops (Go captures only the final response's cookies).
+- **Natural next steps when you pick this up:** commit + push the decrypt batch
+  (CI will run it on all legs), then optionally add the goreleaser release
+  workflow so the one-shot installers' release path becomes real (no release
+  exists yet; installers fall back to `go install`).
+
+## 9. Build / test / QA
+
+```bash
+make build        # → bin/xkvm
+make lint         # gofmt + go vet + go.mod/tools consistency + staticcheck
+make test         # go test ./...
+make qa           # full gate: lint + -race suite + 6-combo cross-compile
+go test -race ./internal/decrypt/   # just the new package
+```
+
+E2E against real artifacts lives in `scripts/` (`e2e-real.sh`, `check-smoke.sh`);
+they need real IPAs/debs and the macOS native toolchain — not part of `make qa`.
+
+## 10. Documentation index
+
+| Path | Content |
+|---|---|
+| `ARCHITECTURE.md` | The deep design doc: upstream parity tables, every converter's exact steps, check tiers, patch registry, decrypt contract (§5.7), milestones, risks. **The authoritative spec — read the relevant section before touching a subsystem.** |
+| `README.md` | User-facing: install, quick start, commands, common flags |
+| `feather-ellekit-spec.md` | Feather-style ElleKit integration spec (D10 patch contract) |
+| `docs/ellekit-build.md` | Building a fat arm64+arm64e ElleKit.framework for vendoring |
+| `docs/roothide-install.md` | Installing converted packages on a roothide jailbreak |
+| `docs/self-improve-protocol.md` | Static + dynamic bug-hunting loop; `make qa` bundles its mechanical phases |
+| `docs/HANDOFF.md` | **This file** |
+| `NOTICE` | Third-party provenance (Cephei GPL-family, sideload dylibs, etc.) |
+| `CONTRIBUTING.md` | Contribution flow and test conventions |

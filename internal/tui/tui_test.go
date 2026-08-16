@@ -12,6 +12,7 @@ import (
 	"github.com/xscope0/xkvm-ios-injector/internal/app"
 	"github.com/xscope0/xkvm-ios-injector/internal/cyanfile"
 	"github.com/xscope0/xkvm-ios-injector/internal/deb"
+	"github.com/xscope0/xkvm-ios-injector/internal/decrypt"
 )
 
 // runUI pipes input into a fresh UI and returns everything it printed.
@@ -575,5 +576,142 @@ func TestTUIInjectEditsIdentity(t *testing.T) {
 	}
 	if !strings.Contains(out, "your tweaked app is ready!") {
 		t.Errorf("success line missing; output:\n%s", out)
+	}
+}
+
+func TestTUIDecryptFlowPromptsAndRoutes(t *testing.T) {
+	// Menu 10, no saved session: login prompts, app id, output-path
+	// question (pick 1 = new folder), then the download runs.
+	u := NewForTest(strings.NewReader(
+		"10\nme@example.com\nhunter2\n310633997\n1\n/tmp/out\nq\n"), &bytes.Buffer{})
+	var got app.DecryptOptions
+	var saved decrypt.Prefs
+	u.Decrypt = func(_ context.Context, o app.DecryptOptions) (string, error) {
+		got = o
+		return "/tmp/out/com.example_1.0.ipa", nil
+	}
+	u.DecryptPrefs = func() (decrypt.Prefs, error) { return decrypt.Prefs{AskMode: decrypt.AskModeAsk}, nil }
+	u.SaveDecryptPrefs = func(p decrypt.Prefs) error { saved = p; return nil }
+	u.HasSavedAuth = func() bool { return false }
+
+	u.Start()
+	out := u.Out.(*bytes.Buffer).String()
+
+	if got.AppleID != "me@example.com" || got.Password != "hunter2" {
+		t.Errorf("credentials not wired: %+v", got)
+	}
+	if got.AppID != "310633997" {
+		t.Errorf("app id = %q, want 310633997", got.AppID)
+	}
+	if got.OutputDir != "/tmp/out" {
+		t.Errorf("output dir = %q, want /tmp/out", got.OutputDir)
+	}
+	if saved.OutputDir != "/tmp/out" || saved.AskMode != decrypt.AskModeAsk {
+		t.Errorf("saved prefs = %+v, want /tmp/out + ask", saved)
+	}
+	for _, want := range []string{"your Apple ID", "password", "what app?", "pick 1, 2, or 3", "downloaded to /tmp/out/com.example_1.0.ipa"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("decrypt flow missing %q; output:\n%s", want, out)
+		}
+	}
+}
+
+func TestTUIDecryptNeverAskAgain(t *testing.T) {
+	// Saved session (kept) + never-ask mode: the output question is skipped.
+	u := NewForTest(strings.NewReader(
+		"10\n1\n310633997\nq\n"), &bytes.Buffer{})
+	var got app.DecryptOptions
+	u.Decrypt = func(_ context.Context, o app.DecryptOptions) (string, error) {
+		got = o
+		return "/saved/com.example_1.0.ipa", nil
+	}
+	u.DecryptPrefs = func() (decrypt.Prefs, error) {
+		return decrypt.Prefs{OutputDir: "/saved", AskMode: decrypt.AskModeNever}, nil
+	}
+	u.SaveDecryptPrefs = func(decrypt.Prefs) error { return nil }
+	u.HasSavedAuth = func() bool { return true }
+
+	u.Start()
+	out := u.Out.(*bytes.Buffer).String()
+
+	if got.OutputDir != "/saved" {
+		t.Errorf("output dir = %q, want the saved /saved", got.OutputDir)
+	}
+	if got.AppleID != "" {
+		t.Errorf("saved session should skip credentials, got AppleID %q", got.AppleID)
+	}
+	if strings.Contains(out, "where should the output") {
+		t.Error("never-ask mode still asked where the output goes")
+	}
+}
+
+func TestTUIDecryptReuseLastDir(t *testing.T) {
+	// Saved session kept, then choice 2 reuses the saved directory.
+	u := NewForTest(strings.NewReader(
+		"10\n1\n310633997\n2\nq\n"), &bytes.Buffer{})
+	var got app.DecryptOptions
+	u.Decrypt = func(_ context.Context, o app.DecryptOptions) (string, error) {
+		got = o
+		return "/last/com.example_1.0.ipa", nil
+	}
+	u.DecryptPrefs = func() (decrypt.Prefs, error) {
+		return decrypt.Prefs{OutputDir: "/last", AskMode: decrypt.AskModeAsk}, nil
+	}
+	u.SaveDecryptPrefs = func(decrypt.Prefs) error { return nil }
+	u.HasSavedAuth = func() bool { return true }
+
+	u.Start()
+
+	if got.OutputDir != "/last" {
+		t.Errorf("output dir = %q, want the reused /last", got.OutputDir)
+	}
+}
+
+func TestTUIDecryptChangeAccount(t *testing.T) {
+	// Saved session exists but the user picks "change account": credentials
+	// are asked for and the new ones reach the download.
+	u := NewForTest(strings.NewReader(
+		"10\n2\nnew@example.com\nnewpw\n310633997\n1\n/tmp/out\nq\n"), &bytes.Buffer{})
+	var got app.DecryptOptions
+	u.Decrypt = func(_ context.Context, o app.DecryptOptions) (string, error) {
+		got = o
+		return "/tmp/out/com.example_1.0.ipa", nil
+	}
+	u.DecryptPrefs = func() (decrypt.Prefs, error) { return decrypt.Prefs{AskMode: decrypt.AskModeAsk}, nil }
+	u.SaveDecryptPrefs = func(decrypt.Prefs) error { return nil }
+	u.HasSavedAuth = func() bool { return true }
+	u.SavedAppleID = func() (string, bool) { return "old@example.com", true }
+
+	u.Start()
+
+	if got.AppleID != "new@example.com" || got.Password != "newpw" {
+		t.Errorf("change-account creds not wired: %+v", got)
+	}
+}
+
+func TestTUIDecryptLogout(t *testing.T) {
+	// "Log out of xkvm" forgets the session, then asks for fresh credentials
+	// so the download can still go ahead.
+	loggedOut := false
+	u := NewForTest(strings.NewReader(
+		"10\n3\nnew@example.com\nnewpw\n310633997\n1\n/tmp/out\nq\n"), &bytes.Buffer{})
+	var got app.DecryptOptions
+	u.Decrypt = func(_ context.Context, o app.DecryptOptions) (string, error) {
+		got = o
+		return "/tmp/out/com.example_1.0.ipa", nil
+	}
+	u.DecryptPrefs = func() (decrypt.Prefs, error) { return decrypt.Prefs{AskMode: decrypt.AskModeAsk}, nil }
+	u.SaveDecryptPrefs = func(decrypt.Prefs) error { return nil }
+	u.HasSavedAuth = func() bool { return true }
+	u.SavedAppleID = func() (string, bool) { return "old@example.com", true }
+	u.Logout = func() error { loggedOut = true; return nil }
+
+	u.Start()
+
+	if !loggedOut {
+		t.Error("logout option did not call Logout")
+	}
+	if got.AppleID != "new@example.com" {
+		t.Errorf("post-logout login not wired: AppleID = %q", got.AppleID)
 	}
 }

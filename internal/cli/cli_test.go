@@ -480,3 +480,32 @@ func TestCheckCmdFixEndToEnd(t *testing.T) {
 func optsEqual(a, b app.Options) bool {
 	return reflect.DeepEqual(a, b)
 }
+
+func TestDecryptMissingAppID(t *testing.T) {
+	cmd := NewRootCmd(func(_ context.Context, _ *app.Options) error { return nil }, nil)
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"decrypt"})
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "missing the app id") {
+		t.Fatalf("xkvm decrypt with no app id: err = %v, want missing-the-app-id", err)
+	}
+}
+
+func TestDecryptHelpText(t *testing.T) {
+	cmd := NewRootCmd(func(_ context.Context, _ *app.Options) error { return nil }, nil)
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"decrypt", "--help"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("decrypt --help: %v", err)
+	}
+	help := out.String()
+	for _, want := range []string{"apple-id", "password", "--logout", "FairPlay"} {
+		if !strings.Contains(help, want) {
+			t.Errorf("decrypt --help missing %q:\n%s", want, help)
+		}
+	}
+}

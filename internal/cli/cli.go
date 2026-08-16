@@ -13,6 +13,7 @@ import (
 
 	"github.com/xscope0/xkvm-ios-injector/internal/app"
 	"github.com/xscope0/xkvm-ios-injector/internal/cyanfile"
+	"github.com/xscope0/xkvm-ios-injector/internal/decrypt"
 	"github.com/xscope0/xkvm-ios-injector/internal/fetch"
 	"github.com/xscope0/xkvm-ios-injector/internal/log"
 	"github.com/xscope0/xkvm-ios-injector/internal/patch"
@@ -168,6 +169,7 @@ to the -i input; the result is written to -o, or overwrites the input.`,
 	cmd.AddCommand(newRootfulCmd())
 	cmd.AddCommand(newRoothideCmd())
 	cmd.AddCommand(newCacheCmd())
+	cmd.AddCommand(newDecryptCmd())
 	return cmd
 }
 
@@ -684,4 +686,70 @@ removes every cached .deb.`,
 	}
 	cmd.Flags().BoolVar(&clear, "clear", false, "remove every cached .deb")
 	return cmd
+}
+
+// newDecryptCmd downloads an App Store app by Apple ID — the ipatool /
+// PancakeStore flow: sign in, resolve the app, download the IPA, and write
+// it out with its iTunesMetadata.plist + SC_Info/ sinf files for sideloading
+// on a device signed in with the same Apple ID.
+func newDecryptCmd() *cobra.Command {
+	var (
+		appleID, password, version, output string
+		logout                             bool
+	)
+	cmd := &cobra.Command{
+		Use:   "decrypt <app-id|app-store-url|bundle-id> [-o dir] [--apple-id ID --password PW]",
+		Short: "download an App Store app by Apple ID for tweaking",
+		Long: `decrypt signs into the iTunes Store and downloads an app's IPA the way
+ipatool and PancakeStore do. The app id can be the numeric id, an
+apps.apple.com link, or a bundle id (looked up online). The output IPA
+carries its iTunesMetadata.plist and SC_Info/ sinf files, so it installs
+on a device signed in with the same Apple ID. The binary itself stays
+FairPlay-encrypted — real Mach-O decryption needs a jailbroken device.
+The session is remembered after the first login; --logout forgets it.`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if logout {
+				if err := decrypt.Logout(); err != nil {
+					return err
+				}
+				log.Infof("signed out")
+				return nil
+			}
+			var appID string
+			if len(args) > 0 {
+				appID = args[0]
+			}
+			if appID == "" {
+				return fmt.Errorf("missing the app id, App Store URL, or bundle id")
+			}
+			path, err := app.RunDecrypt(cmd.Context(), app.DecryptOptions{
+				AppleID:     appleID,
+				Password:    password,
+				AppID:       appID,
+				Version:     version,
+				OutputDir:   output,
+				Interactive: stdinIsTerminal(),
+			})
+			if err != nil {
+				return err
+			}
+			log.Infof("done: %s", path)
+			return nil
+		},
+	}
+	f := cmd.Flags()
+	f.StringVar(&appleID, "apple-id", "", "Apple ID to sign in with (remembered after the first login)")
+	f.StringVar(&password, "password", "", "Apple ID password (omit to use the saved session)")
+	f.StringVarP(&output, "output", "o", "", "directory for the output .ipa (default: current dir or the saved one)")
+	f.StringVar(&version, "version", "", "external version id to download (default: latest)")
+	f.BoolVar(&logout, "logout", false, "forget the saved Apple ID session")
+	return cmd
+}
+
+// stdinIsTerminal reports whether stdin is an interactive terminal, used to
+// decide whether the CLI may prompt for credentials.
+func stdinIsTerminal() bool {
+	fi, err := os.Stdin.Stat()
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
 }

@@ -19,6 +19,7 @@ import (
 
 	"github.com/xscope0/xkvm-ios-injector/internal/app"
 	"github.com/xscope0/xkvm-ios-injector/internal/cyanfile"
+	"github.com/xscope0/xkvm-ios-injector/internal/decrypt"
 	"github.com/xscope0/xkvm-ios-injector/internal/fetch"
 	"github.com/xscope0/xkvm-ios-injector/internal/log"
 	"github.com/xscope0/xkvm-ios-injector/internal/patch"
@@ -47,6 +48,21 @@ type UI struct {
 	CacheUsage func() (dir string, debs int, bytes int64, err error)
 	CachePrune func() (removed int, err error)
 	CacheClear func() (removed int, err error)
+	// Decrypt downloads an App Store app by Apple ID. Injectable so tests
+	// stub the network; the real implementation is app.RunDecrypt.
+	Decrypt func(ctx context.Context, o app.DecryptOptions) (string, error)
+	// DecryptPrefs / SaveDecryptPrefs persist the output-directory choice
+	// (ask / reuse / never ask again). Injectable so tests don't touch the
+	// real user config dir; the defaults are decrypt.LoadPrefs/SavePrefs.
+	DecryptPrefs     func() (decrypt.Prefs, error)
+	SaveDecryptPrefs func(decrypt.Prefs) error
+	// HasSavedAuth reports whether a signed-in Apple ID session exists,
+	// SavedAppleID names it, and Logout forgets it. Injectable so tests stay
+	// off the real user config dir; defaults are decrypt.HasSavedAuth /
+	// decrypt.SavedAppleID / decrypt.Logout.
+	HasSavedAuth func() bool
+	SavedAppleID func() (string, bool)
+	Logout       func() error
 }
 
 // New returns a UI for the current terminal. Color and animation are enabled
@@ -62,7 +78,12 @@ func New() *UI {
 		Run:        app.Run,
 		CacheUsage: fetch.CacheUsage,
 		CachePrune: fetch.PruneExpired,
-		CacheClear: fetch.ClearCache,
+		CacheClear: fetch.ClearCache, Decrypt: app.RunDecrypt,
+		DecryptPrefs:     decrypt.LoadPrefs,
+		SaveDecryptPrefs: decrypt.SavePrefs,
+		HasSavedAuth:     decrypt.HasSavedAuth,
+		SavedAppleID:     decrypt.SavedAppleID,
+		Logout:           decrypt.Logout,
 	}
 }
 
@@ -76,7 +97,12 @@ func NewForTest(r io.Reader, w io.Writer) *UI {
 		Run:        app.Run,
 		CacheUsage: fetch.CacheUsage,
 		CachePrune: fetch.PruneExpired,
-		CacheClear: fetch.ClearCache,
+		CacheClear: fetch.ClearCache, Decrypt: app.RunDecrypt,
+		DecryptPrefs:     decrypt.LoadPrefs,
+		SaveDecryptPrefs: decrypt.SavePrefs,
+		HasSavedAuth:     decrypt.HasSavedAuth,
+		SavedAppleID:     decrypt.SavedAppleID,
+		Logout:           decrypt.Logout,
 	}
 }
 
@@ -116,6 +142,8 @@ func (u *UI) Start() {
 			u.flowFetch()
 		case "9", "cache":
 			u.flowCache()
+		case "10", "decrypt", "d":
+			u.flowDecrypt()
 		default:
 			u.say(anYellow, "hmm, I didn't get that. try a number from the list, or q to quit.")
 		}
@@ -136,6 +164,7 @@ func (u *UI) menu() {
 	fmt.Fprintln(u.Out, u.paint(anCyan, "  7. "+anBold+"about")+"   —  what xkvm is and why it exists")
 	fmt.Fprintln(u.Out, u.paint(anCyan, "  8. "+anBold+"fetch")+"   —  download a tweak by its bundle id from the repos")
 	fmt.Fprintln(u.Out, u.paint(anCyan, "  9. "+anBold+"cache")+"   —  see and tidy the folder where downloaded tweaks are stored")
+	fmt.Fprintln(u.Out, u.paint(anCyan, " 10. "+anBold+"decrypt")+"  —  download an app from the App Store by Apple ID")
 	fmt.Fprintln(u.Out, u.paint(anCyan, "  q. "+anBold+"quit")+"   —  leave xkvm")
 }
 
@@ -658,6 +687,8 @@ func (u *UI) help() {
 		"  • fetch   — download a tweak from the repos by its bundle id",
 		"  • cache   — see the folder where fetched tweaks are kept (reused so",
 		"    you don't download twice, auto-cleaned after 7 days), and tidy it",
+		"  • decrypt — download an app from the App Store with your Apple ID,",
+		"    so you can inject tweaks into it (the ipatool / PancakeStore flow)",
 		"",
 		"the same tools on the command line",
 		"  ────────────────────────────────",
@@ -674,6 +705,8 @@ func (u *UI) help() {
 		"  xkvm cyan-check recipe.cyan                          # check a recipe",
 		"  xkvm cache                                          # show the fetch cache folder",
 		"  xkvm cache --clear                                  # empty the fetch cache",
+		"  xkvm decrypt 310633997 --apple-id me@x.com --password …  # download an app",
+		"  xkvm decrypt --logout                                # forget the saved login",
 		"  xkvm --help                                          # every flag, explained",
 		"",
 		"good to know",
@@ -772,6 +805,143 @@ func (u *UI) flowCache() {
 		})
 		u.showResult(out, werr, "cache cleared — the next fetch starts fresh.")
 	}
+}
+
+// flowDecrypt is menu 10: download an App Store app by Apple ID (the
+// ipatool / PancakeStore flow) so it can be tweaked and sideloaded. Sign in
+// once (the session is remembered), paste an app link or id, pick where the
+// output goes, and xkvm hands back an .ipa ready for menu 1.
+func (u *UI) flowDecrypt() {
+	u.title("decrypt")
+	u.say(anWhite, "xkvm signs into the App Store with your Apple ID and downloads an app's")
+	u.say(anWhite, "IPA — the same flow ipatool and PancakeStore use. Then you can inject")
+	u.say(anWhite, "tweaks into it with menu 1. you sign in once; the session is remembered.")
+	fmt.Fprintln(u.Out)
+	u.say(anYellow, "the app you want must:")
+	u.say(anWhite, "  • have been purchased with the same Apple ID you sign in with")
+	u.say(anWhite, "  • not be installed on your device (offloading works)")
+	u.say(anWhite, "  • have valid versions to download (some apps don't)")
+	u.say(anYellow, "if an app can't be downloaded or crashes after launch, xkvm can't fix it.")
+	fmt.Fprintln(u.Out)
+
+	appleID, password := "", ""
+	// A saved session is kept as-is: appleID stays empty and the client loads
+	// it from disk. Switching accounts or logging out asks for credentials
+	// instead, and only those paths require a non-empty appleID.
+	if u.HasSavedAuth() {
+		q := "signed in"
+		if id, ok := u.SavedAppleID(); ok {
+			q = "signed in as " + id
+		}
+		switch u.pickOne(q, []string{
+			"keep using this Apple ID",
+			"change to a different Apple ID",
+			"log out of xkvm",
+		}) {
+		case 0: // keep — nothing to do; the saved session is used as-is
+		case 1: // change account
+			appleID, password = u.askCredentials()
+			if appleID == "" {
+				return
+			}
+		case 2: // log out, then sign in fresh
+			if err := u.Logout(); err != nil {
+				u.say(anRed, "couldn't log out: "+err.Error())
+			} else {
+				u.say(anGreen, "signed out. the saved login is gone.")
+			}
+			appleID, password = u.askCredentials()
+			if appleID == "" {
+				return
+			}
+		default:
+			return
+		}
+	} else {
+		appleID, password = u.askCredentials()
+		if appleID == "" {
+			return
+		}
+	}
+
+	appInput := u.requireText("what app? paste the App Store link, the numeric id, or a bundle id")
+	if appInput == "" {
+		return
+	}
+
+	// Output directory: ask unless the user chose "never ask again" (or
+	// "reuse the last one" — that still reuses, just doesn't re-ask).
+	prefs, _ := u.DecryptPrefs()
+	outDir := prefs.OutputDir
+	if prefs.AskMode == decrypt.AskModeReuse || prefs.AskMode == decrypt.AskModeNever {
+		if outDir == "" {
+			outDir = "."
+		}
+	} else {
+		u.say(anWhite, "where should the output .ipa go?")
+		u.say(anCyan, "  1. pick a folder")
+		u.say(anCyan, "  2. reuse the last one")
+		u.say(anCyan, "  3. never ask again (always use the same folder)")
+		choice := u.readLine("pick 1, 2, or 3 (or q to cancel): ")
+		switch strings.TrimSpace(choice) {
+		case "1":
+			dir := u.pathPrompt("output folder", ".")
+			if dir == "" {
+				return
+			}
+			outDir = dir
+			prefs.AskMode = decrypt.AskModeAsk
+		case "2":
+			if outDir == "" {
+				outDir = "."
+			}
+			prefs.AskMode = decrypt.AskModeAsk
+		case "3":
+			if outDir == "" {
+				outDir = "."
+			}
+			prefs.AskMode = decrypt.AskModeNever
+		default:
+			return
+		}
+		prefs.OutputDir = outDir
+		_ = u.SaveDecryptPrefs(prefs)
+	}
+
+	var path string
+	out, err := u.runSpinning("downloading from the App Store...", func() error {
+		p, derr := u.Decrypt(context.Background(), app.DecryptOptions{
+			AppleID:   appleID,
+			Password:  password,
+			AppID:     appInput,
+			OutputDir: outDir,
+		})
+		if derr != nil {
+			return derr
+		}
+		path = p
+		return nil
+	})
+	if err != nil {
+		u.showResult(out, err, "nothing downloaded")
+		u.say(anYellow, "  tip: if the saved sign-in expired, pick 'change to a different Apple ID' next time and sign in again.")
+		return
+	}
+	u.showResult(out, nil, "downloaded to "+path+" — inject tweaks into it with menu 1.")
+}
+
+// askCredentials prompts for an Apple ID and password. The password is stored
+// on this machine so the next download skips the login step.
+func (u *UI) askCredentials() (string, string) {
+	appleID := u.requireText("your Apple ID (email)")
+	if appleID == "" {
+		return "", ""
+	}
+	password := u.requireText("your Apple ID password (stored on this machine for reuse)")
+	if password == "" {
+		return "", ""
+	}
+	return appleID, password
 }
 
 // shortName returns a path's final component, trimmed to ~40 chars.

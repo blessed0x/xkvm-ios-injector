@@ -767,6 +767,60 @@ debify-output with `var/jb` layout + control assertions; arm64
 ADRP/ADR/ADD/MOV encode/decode round trips; the `__cstring` runtime-proof
 test above.
 
+### 5.7 App Store decrypt (`xkvm decrypt`) — spec: `internal/decrypt`, port of PancakeStore `IPATool.swift`
+
+Implemented as the M5 macOS-side milestone (the on-device `fouldecrypt` variant stays out of scope).
+The reference is the actual working code, not the README: `MuffinStoreJailed/Functions/IPATool.swift`
+from `jailbreakdotparty/PancakeStore`, which is itself ipatool-derived. The port keeps every quirk
+that Apple's backend depends on.
+
+**Contract (each step is a separate hermetic httptest test):**
+
+1. **GUID** — `GenerateGUID(appleID)`: `"00" + SHA1("CAFEBABE"+appleID+"CAFEBABE")hex[10:20]`, upper-cased.
+   Golden-pinned (e.g. `test@example.com` → `0097999D59A9`).
+2. **Bag** — `GET init.itunes.apple.com/bag.xml?guid=<GUID>` (Configurator UA), slice out the
+   `<plist>` fragment, read `urlBag.authenticateAccount`. Any failure falls back to
+   `https://auth.itunes.apple.com/auth/v1/native/` — Apple moves this endpoint; the bag exists so
+   the fallback is only for when the bag itself is down.
+3. **Authenticate** — `POST {authURL}` (trailing `/` forced — the "brazil fix") with a JSON body
+   `{appleId, password, guid, rmp:0, why:signIn}` but `Content-Type: application/x-www-form-urlencoded`
+   (the upstream quirk, kept). Redirects are followed re-POSTing (Go preserves POST on redirect
+   because the body is a `bytes.Reader`). The "russia fix": the pod is read from the final landing's
+   `pod` header, not the first response. Success plist yields `passwordToken`, `dsid`
+   (`download-queue-info`), the `x-set-apple-store-front` header, and the account name → session
+   headers `X-Dsid` / `iCloud-Dsid` / `X-Apple-Store-Front` / `X-Token` + cookies. A
+   `customerMessage` containing `Configurator_message` → `ErrTwoFactor` (approve on a trusted
+   device and retry — this is a hard boundary, like upstream's Safari flow).
+4. **Buy** — `POST https://p{pod}-buy.itunes.apple.com/WebObjects/MZFinance.woa/wa/volumeStoreDownloadProduct?guid=<GUID>`
+   with the session headers + cookies and body `{creditDisplay, guid, salableAdamId, [externalVersionId]}`
+   → `songList[0]`: the CDN `.zip` URL, `sinfs[]`, and `metadata`. `cancel-purchase-batch` in the
+   response is a hard error (account lacks entitlement).
+5. **Output rewriting** — download the zip, then copy every entry into the output IPA except:
+   replace `iTunesMetadata.plist` (metadata + `apple-id`/`userName` = the signing-in Apple ID, XML
+   plist) and write each sinf from the buy response at the `SC_Info/Manifest.plist` `SinfPaths`
+   entries (old apps without a manifest fall back to `SC_Info/<CFBundleExecutable>.sinf`). The
+   output name is `<CFBundleIdentifier>_<CFBundleShortVersionString>.ipa`. `__MACOSX/` junk is
+   dropped. Deliberately **not** `ipa.Repack` — it only repacks `Payload/` and would drop
+   `iTunesMetadata.plist`.
+
+**Boundary (documented in the help text too):** the binary inside the IPA stays FairPlay-encrypted;
+real Mach-O decryption needs a jailbroken device. What `xkvm decrypt` delivers is the App Store's
+own download, re-processed exactly like PancakeStore/ipatool, installable on a device signed in with
+the same Apple ID.
+
+**Auth persistence:** `os.UserConfigDir()/xkvm/auth.json` (e.g. `~/Library/Application
+Support/xkvm/auth.json`), mode 0600, holding the session (apple id, password, guid, pod, headers,
+cookies). Plaintext password is a documented trade-off — re-auth per download would make the flow
+unusable, and ipatool persists the same; treat the file like `~/.ssh`. Output-directory preference
+(`decrypt-prefs.json`, same dir): `ask` / `reuse` / `never` — the TUI's 1/2/3 question. The TUI's
+session menu (on entering decrypt with a saved session) offers **keep this Apple ID / change to a
+different Apple ID / log out of xkvm** — ending a session is an explicit choice, never automatic.
+The decrypt entry screen also carries PancakeStore's target-app requirements note (purchased with
+the same Apple ID, not installed, has valid versions).
+
+**Input resolution:** `ResolveAppID` accepts the numeric adam id, an `apps.apple.com` URL (trailing
+`/idNNN`), or a bundle id via the iTunes Search API (`itunes.apple.com/lookup?bundleId=`).
+
 ---
 
 ## 6. Pipeline (parity with `logic.py`, extended)
@@ -833,7 +887,7 @@ repack .ipa (compression level, exclude hidden files) | emit .app
 | M2 | **Injection parity (hybrid)** | `macho/toolchain` embedding (**deleted** — superseded by M3); full `inject()` parity: dep fixing, extras auto-inject, entitlements, fakesign, thin, icon, watch/extensions, plist ops — **differential parity vs cyan** | 2–3 d | M1 |
 | M3 | **Pure-Go Mach-O** done | insert_dylib → `macho/native`; ldid → `pkg/codesign`; otool→deps; lipo→thin; **fixes Linux/aarch64 LIEF hole**; the M2 toolchain embed was removed after M3 landed | 3–5 d | M2 |
 | M4 | **Azule fetch** done | `fetch` package: MobileAPT + Canister + dep recursion; `xkvm --fetch`/`-A`/`--no-recurse`; live smoke test (Canister v4 + real repo) gated behind `XKVM_LIVE_FETCH=1` | 2–3 d | M1 |
-| M5 | **iOS on-device** | cross-compile `GOOS=darwin GOARCH=arm64`; `--decrypt` (ipatool + fouldecrypt variants); Roothide fs caveats documented | 1–2 d | M3 |
+| M5 | **App Store decrypt** (macOS side) done | `xkvm decrypt` + TUI menu 10: bag/auth/buy (port of PancakeStore `IPATool.swift`), sinfs + iTunesMetadata rewriting, session persistence, 1/2/3 output-prefs — contract §5.7. On-device `fouldecrypt` variant stays out of scope | 1–2 d | M3 |
 | M6 | **Ship** | Homebrew tap, goreleaser release flow, shell completion, README, NOTICE/licenses | 1 d | M4/M5 |
 | FE | **Feather reference + ElleKit** | mode-keyed `commonDeps` (substrate vs real ElleKit runtime), libhooker auto-switch pre-scan, `internal/patch` registry + Liquid Glass patches, `BumpSDK26`, vendored fat ElleKit.framework, e2e-real patch stages [9/10]/[10/10] | 1 d | M3 |
 
@@ -863,6 +917,8 @@ repack .ipa (compression level, exclude hidden files) | emit .app
 | License obligations for embedded frameworks | NOTICE + provenance doc before public release (M6) |
 | Canister/MobileAPT API drift | **Drift realized and absorbed:** the spec'd `api.canister.me/v2` endpoint 308s to `api.tale.me/v4` (single hop, suffix-preserving — see the redirect contract in §2.2); `canisterBase` is a package var so the live endpoint is re-pointable without code changes. Hermetic httptest coverage + a network-gated live smoke test (`XKVM_LIVE_FETCH=1`) stay out of CI; `--no-recurse` escape hatch |
 | Roothide jailbreak fs (`/rootfs` + `/.jbroot`) | Documented limitation (cyan marks it wontfix); scope M5 to standard rootless/rootful |
+| Apple auth instability (server-side changes, 2FA) | Bag endpoint + fallback so the auth URL stays discoverable; `ErrTwoFactor` boundary (approve on a trusted device, retry); the whole flow is hermetic-httptest-pinned and the live leg is gated the same way `XKVM_LIVE_FETCH` gates the fetch smoke — only a real Apple ID on a Mac can validate it end to end |
+| Decrypt session stored with plaintext password | Mode-0600 auth file in the user config dir, documented as a secret (§5.7) — the same trade-off ipatool makes; `xkvm decrypt --logout` forgets it |
 
 ---
 
