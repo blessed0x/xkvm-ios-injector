@@ -219,7 +219,7 @@ func TestOmegaHardBlocksUnsupportedIOS(t *testing.T) {
 }
 
 func TestOmegaUntestedWarnsAndNeedsContinue(t *testing.T) {
-	out, stub, err := runOmega(t, []string{"omega", "--ios", "24.0"}, "CONTINUE\n")
+	out, stub, err := runOmega(t, []string{"omega", "--ios", "28.1"}, "CONTINUE\n")
 	if err != nil {
 		t.Fatalf("typed CONTINUE should proceed: %v", err)
 	}

@@ -64,12 +64,14 @@ func TestOmegaVerdictTable(t *testing.T) {
 	}{
 		{"15.8", Unsupported, "16 or higher"},
 		{"16.0", Supported, "16-18"},
-		{"18.5", Supported, "16-18"},
-		{"19.0", Untested, "newer than the proven"},
-		{"24.3", Untested, ""},
-		{"26.9", Supported, "live-verified"},
+		{"18.7", Supported, "16-18"},
+		// Apple skipped 19-25: year-based versioning went 18 -> 26.
+		{"19.0", Unsupported, "never released"},
+		{"24.3", Unsupported, "never released"},
+		{"26.1", Supported, "live-verified"},
 		{"27.0", Unsupported, "reset your data"},
-		{"30.1", Unsupported, ""},
+		// 28+ is unreleased: caution, not a hard block — nobody has run it.
+		{"30.1", Untested, "future/unreleased"},
 	}
 	for _, c := range cases {
 		got, why, err := OmegaVerdict(c.ver)

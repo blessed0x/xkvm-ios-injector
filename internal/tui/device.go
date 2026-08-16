@@ -230,6 +230,15 @@ type chanWriter struct {
 }
 
 func (w *chanWriter) Write(p []byte) (int, error) {
+	// Deliver a line the handler already produced: the buffered channel has
+	// room in practice, so a line emitted concurrently with cancel() must not
+	// be swallowed by the stop path (user hits Enter as a log line arrives).
+	select {
+	case w.ch <- string(p):
+		return len(p), nil
+	default:
+	}
+	// Channel full: only then yield to cancellation instead of blocking.
 	select {
 	case w.ch <- string(p):
 		return len(p), nil
@@ -267,9 +276,25 @@ func (u *UI) dvSyslog() {
 			fmt.Fprintln(u.Out, ln)
 		case <-stop:
 			cancel()
-			// Drain what the handler already produced: print the lines it
-			// managed before cancellation, then leave once it exits.
+			// Drain what the handler already produced before we decide
+			// it's finished. A buffered line and the handler's exit race
+			// each other; printing the line first guarantees no log line
+			// is swallowed by the "stopped" banner.
+			timeout := time.After(2 * time.Second)
 			for {
+				// Emit every line already buffered without blocking.
+				select {
+				case ln, more := <-lines:
+					if !more {
+						u.say(cYellow, "log stream stopped")
+						return
+					}
+					fmt.Fprintln(u.Out, ln)
+					continue
+				default:
+				}
+				// Nothing buffered: wait for the handler to exit, one more
+				// line, or give up.
 				select {
 				case <-done:
 					u.say(cYellow, "log stream stopped")
@@ -280,7 +305,7 @@ func (u *UI) dvSyslog() {
 						return
 					}
 					fmt.Fprintln(u.Out, ln)
-				case <-time.After(2 * time.Second):
+				case <-timeout:
 					u.say(cYellow, "log stream stopped")
 					return
 				}
@@ -299,8 +324,10 @@ func (u *UI) dvSyslog() {
 // dvOmega is the blacklist remover — jailbreak.party Omega reimplemented on
 // the native stack: a partial backup restore that replaces the revoke +
 // certificate databases with directories the system can no longer write to.
-// Version policy: 16-18 supported, 19-26 untested (caution), <16 or >=27
-// hard-blocked (iOS 27 restores can reset data — never run).
+// Version policy: 16-18 and 26 supported (26.1 live-verified), <16 /
+// 19-25 / >=27 hard-blocked, 28+ untested (future, unreleased). Apple
+// never released iOS 19-25; iOS 27 is blocked because its restores can
+// reset data.
 func (u *UI) dvOmega() {
 	u.flowIntro("blacklist remover (Omega)", "clears the databases that remember which of your sideloaded apps are revoked or which signing certificates are banned — the jailbreak.party Omega restore, rebuilt in Go. The phone reboots by itself when it finishes; turn Find My OFF and back up first.", "device → omega")
 	target, ok := u.deviceOrHint()

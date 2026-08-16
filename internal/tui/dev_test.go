@@ -190,7 +190,7 @@ func TestTUIDevOmegaSupportedRuns(t *testing.T) {
 }
 
 func TestTUIDevOmegaUntestedCaution(t *testing.T) {
-	s := &stubDev{info: device.Info{Name: "Phone", ProductVersion: "24.0"}}
+	s := &stubDev{info: device.Info{Name: "Phone", ProductVersion: "28.1"}}
 	out := devUI(t, s, "4\n9\nq\n")
 	if !strings.Contains(out, "[caution]") || !strings.Contains(out, "16-18") {
 		t.Errorf("untested caution missing:\n%s", out)

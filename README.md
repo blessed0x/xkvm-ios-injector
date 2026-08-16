@@ -210,9 +210,12 @@ xkvm device omega                 # clear revoke + cert blacklists (Omega)
 `device omega` is the jailbreak.party [Omega](https://github.com/jailbreakdotparty/Omega)
 blacklist remover, ported to the native stack: a partial-backup restore that
 replaces the revoke and certificate-validity databases with directories the
-system can't write to — Apple forgets every revoke. Version policy: iOS 16-18
-supported, 19-26 untested (caution), <16 and >=27 hard-blocked (on iOS 27 the
-backup system changed; the restore could reset your data). Turn off Find My
+system can't write to — Apple forgets every revoke. Version policy: iOS 16-18 and 26
+are supported (26.1 live-verified), <16, 19-25 and >=27 are hard-blocked, and
+only future unreleased iOS (28+) gets the untested caution. Apple never
+released iOS 19-25: it moved 18 -> 26 with year-based versioning, so there
+was never a 19-25 untested gap; on iOS 27 the backup system changed and the
+restore could reset your data. Turn off Find My
 and back up first; it asks you to type CONTINUE. Same feature lives in the
 TUI under device → omega.
 

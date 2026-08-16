@@ -338,10 +338,10 @@ certificate-banned sideloaded apps start working again, permanently
 (until a data wipe).
 
 The iOS version is detected from the connected device; --ios X.Y
-overrides. Policy: iOS 16-18 is the proven window (supported), 19-26 gets
-a caution (untested — nobody verified Omega there yet), and <16 or >=27 is
-a hard block: on iOS 27 the backup system changed and this restore can
-reset your data or settings, so xkvm refuses to run it.
+overrides. Policy: iOS 16-18 and 26 are the proven windows (supported),
+<16, 19-25 and >=27 are hard blocks, and only future unreleased versions
+(28+) get the untested caution. Apple never released iOS 19-25: it moved
+18 -> 26 (year-based versioning), so 19-25 was never a real untested gap.
 
 Before running: turn OFF Find My (Settings → your name → Find My) and
 make a backup. The phone reboots by itself when the restore finishes.`,

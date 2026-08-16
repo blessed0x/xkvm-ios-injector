@@ -90,9 +90,12 @@ speak the mobilebackup2 device-link protocol (`internal/device/restore.go`:
 DownloadFiles/StatusResponse, chunk codes 0xC/0x0, zero terminator),
 replace DatabaseDomain MobileIdentityData + ProtectedDomain trustd
 databases with directories, inject the two skip-setup plists, reboot via
-diagnostics. Version policy: 16-18 supported / 19-26 untested (caution) /
-<16 and >=27 hard block (KindUnsupported, exit 66) — Omega's own README
-warns iOS 27 restores can reset data. Protocol core fully driven by a
+diagnostics. Version policy: 16-18 and 26 supported (26.1 live-verified) /
+<16, 19-25 and >=27 hard block (KindUnsupported, exit 66) / only a future
+unreleased iOS (28+) gets the untested caution. Apple never released
+iOS 19-25: year-based versioning moved 18 straight to 26, so there is no
+19-26 untested gap. iOS 27 stays a hard block because Omega's own README
+warns its restores can reset data. Protocol core fully driven by a
 scripted peer over net.Pipe in tests (handshake, options, payload
 byte-equality, Find My refusal, crash_on_purpose, missing-file path).
 
