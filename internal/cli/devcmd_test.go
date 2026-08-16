@@ -13,10 +13,11 @@ import (
 )
 
 type stubDevHandler struct {
-	devs     []device.Dev
-	info     device.Info
-	apps     []device.App
-	launched []string
+	devs      []device.Dev
+	info      device.Info
+	apps      []device.App
+	launched  []string
+	omegaRuns int
 }
 
 func (s *stubDevHandler) Close() error                                   { return nil }
@@ -45,7 +46,14 @@ func (s *stubDevHandler) Kill(ctx context.Context, udid string, pid uint64) erro
 func (s *stubDevHandler) Syslog(ctx context.Context, udid string, w io.Writer) error {
 	return nil
 }
-func (s *stubDevHandler) Restart(ctx context.Context, udid string) error  { return nil }
+func (s *stubDevHandler) Restart(ctx context.Context, udid string) error { return nil }
+func (s *stubDevHandler) OmegaRestore(ctx context.Context, udid string, progress func(float64)) error {
+	s.omegaRuns++
+	if progress != nil {
+		progress(100)
+	}
+	return nil
+}
 func (s *stubDevHandler) Shutdown(ctx context.Context, udid string) error { return nil }
 
 func runDeviceCmd(t *testing.T, sub string, args ...string) (string, error) {
@@ -170,5 +178,118 @@ func TestDeviceOptionsTimeoutsFlow(t *testing.T) {
 	}
 	if captured.Timeout != 3*time.Second {
 		t.Errorf("--timeout not forwarded: %v", captured.Timeout)
+	}
+}
+
+func runOmega(t *testing.T, args []string, in string) (string, *stubDevHandler, error) {
+	t.Helper()
+	stub := &stubDevHandler{
+		devs: []device.Dev{{UDID: "AAAA", Transport: device.TransportUSB}},
+		info: device.Info{Name: "Phone", ProductVersion: "18.5"},
+	}
+	orig := deviceHandler
+	deviceHandler = func(o device.Options) device.Handler { return stub }
+	t.Cleanup(func() { deviceHandler = orig })
+	var out bytes.Buffer
+	cmd := newDeviceCmd()
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	if in != "" {
+		cmd.SetIn(strings.NewReader(in))
+	}
+	cmd.SetArgs(args)
+	err := cmd.Execute()
+	return out.String(), stub, err
+}
+
+func TestOmegaHardBlocksUnsupportedIOS(t *testing.T) {
+	_, stub, err := runOmega(t, []string{"omega", "--ios", "27.1"}, "")
+	if err == nil {
+		t.Fatal("iOS 27 must hard-block")
+	}
+	if device.ExitCode(err) != 66 {
+		t.Errorf("hard block should exit 66, got %d (%v)", device.ExitCode(err), err)
+	}
+	if !strings.Contains(err.Error(), "hard block") {
+		t.Errorf("no hard-block wording: %v", err)
+	}
+	if stub.omegaRuns != 0 {
+		t.Error("restore must never run when blocked")
+	}
+}
+
+func TestOmegaUntestedWarnsAndNeedsContinue(t *testing.T) {
+	out, stub, err := runOmega(t, []string{"omega", "--ios", "24.0"}, "CONTINUE\n")
+	if err != nil {
+		t.Fatalf("typed CONTINUE should proceed: %v", err)
+	}
+	if !strings.Contains(out, "caution") {
+		t.Errorf("untested warning missing: %q", out)
+	}
+	if stub.omegaRuns != 1 {
+		t.Errorf("restore runs = %d, want 1", stub.omegaRuns)
+	}
+}
+
+func TestOmegaRefusesWithoutContinue(t *testing.T) {
+	out, stub, err := runOmega(t, []string{"omega", "--ios", "18.5"}, "nah\n")
+	if err == nil {
+		t.Fatal("refusal must abort")
+	}
+	if stub.omegaRuns != 0 {
+		t.Error("restore ran without confirmation")
+	}
+	_ = out
+}
+
+func TestOmegaContinueIsCaseInsensitive(t *testing.T) {
+	_, stub, err := runOmega(t, []string{"omega", "--ios", "18.5"}, "continue\n")
+	if err != nil {
+		t.Fatalf("lowercase continue should pass: %v", err)
+	}
+	if stub.omegaRuns != 1 {
+		t.Error("restore not run")
+	}
+}
+
+func TestOmegaYesSkipsGate(t *testing.T) {
+	_, stub, err := runOmega(t, []string{"omega", "--ios", "18.5", "--yes"}, "")
+	if err != nil {
+		t.Fatalf("--yes should skip the gate: %v", err)
+	}
+	if stub.omegaRuns != 1 {
+		t.Error("restore not run")
+	}
+}
+
+func TestOmegaDetectsVersionFromDevice(t *testing.T) {
+	_, stub, err := runOmega(t, []string{"omega", "--yes"}, "")
+	if err != nil {
+		t.Fatalf("device-detected version (18.5) should be supported: %v", err)
+	}
+	if stub.omegaRuns != 1 {
+		t.Error("restore not run")
+	}
+}
+
+// TestOmegaPolicyBeforeDevice is the regression guard for the ordering bug:
+// an explicit --ios must hard-block even when NO device is attached (the
+// stub lists zero devices) — policy is pure math and must fire first.
+func TestOmegaPolicyBeforeDevice(t *testing.T) {
+	stub := &stubDevHandler{} // zero devices
+	orig := deviceHandler
+	deviceHandler = func(o device.Options) device.Handler { return stub }
+	t.Cleanup(func() { deviceHandler = orig })
+	var out bytes.Buffer
+	cmd := newDeviceCmd()
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"omega", "--ios", "27.1"})
+	err := cmd.Execute()
+	if err == nil || device.ExitCode(err) != 66 {
+		t.Fatalf("device-less hard block: err=%v", err)
+	}
+	if stub.omegaRuns != 0 {
+		t.Error("restore must never run")
 	}
 }

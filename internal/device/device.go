@@ -75,12 +75,13 @@ type Options struct {
 type ErrorKind int
 
 const (
-	KindUsage      ErrorKind = iota // bad invocation (ambiguous device, no device)
-	KindNotFound                    // device, app, or service missing
-	KindPermission                  // trust dialog, locked device, pairing refused
-	KindTimeout                     // operation exceeded its deadline
-	KindConnection                  // usbmuxd / transport failure
-	KindInternal                    // everything else
+	KindUsage       ErrorKind = iota // bad invocation (ambiguous device, no device)
+	KindNotFound                     // device, app, or service missing
+	KindPermission                   // trust dialog, locked device, pairing refused
+	KindTimeout                      // operation exceeded its deadline
+	KindConnection                   // usbmuxd / transport failure
+	KindUnsupported                  // the operation must not run on this version
+	KindInternal                     // everything else
 )
 
 // Error is a device operation failure with a human-remediation hint.
@@ -122,6 +123,8 @@ func ExitCode(err error) int {
 		return 68
 	case KindConnection:
 		return 69
+	case KindUnsupported:
+		return 66
 	default:
 		return 70
 	}
@@ -143,6 +146,7 @@ type Handler interface {
 	Launch(ctx context.Context, udid, bundleID string, env map[string]string, args []string) (uint64, error)
 	Kill(ctx context.Context, udid string, pid uint64) error
 	Syslog(ctx context.Context, udid string, w io.Writer) error
+	OmegaRestore(ctx context.Context, udid string, progress func(float64)) error
 	Restart(ctx context.Context, udid string) error
 	Shutdown(ctx context.Context, udid string) error
 }

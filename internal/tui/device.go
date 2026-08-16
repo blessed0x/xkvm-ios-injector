@@ -295,3 +295,65 @@ func (u *UI) dvSyslog() {
 		}
 	}
 }
+
+// dvOmega is the blacklist remover — jailbreak.party Omega reimplemented on
+// the native stack: a partial backup restore that replaces the revoke +
+// certificate databases with directories the system can no longer write to.
+// Version policy: 16-18 supported, 19-26 untested (caution), <16 or >=27
+// hard-blocked (iOS 27 restores can reset data — never run).
+func (u *UI) dvOmega() {
+	u.flowIntro("blacklist remover (Omega)", "clears the databases that remember which of your sideloaded apps are revoked or which signing certificates are banned — the jailbreak.party Omega restore, rebuilt in Go. The phone reboots by itself when it finishes; turn Find My OFF and back up first.", "device → omega")
+	target, ok := u.deviceOrHint()
+	if !ok {
+		return
+	}
+	var version string
+	if info, err := u.Device.Info(context.Background(), target.UDID); err == nil {
+		version = info.ProductVersion
+	}
+	if version == "" {
+		version = u.readLine("couldn't read the OS version from the device — enter it (X.Y): ")
+		if version == "" {
+			return
+		}
+	}
+	verdict, why, err := device.OmegaVerdict(version)
+	if err != nil {
+		u.say(cRed, err.Error())
+		return
+	}
+	switch verdict {
+	case device.Unsupported:
+		u.say(cRed, "[hard block] omega on iOS "+version+" is NOT supported — xkvm will not run it")
+		u.say(cWhite, "  why: "+why)
+		u.say(cYellow, "  this is for your own protection: the restore could reset your data. nothing was changed.")
+		return
+	case device.Untested:
+		u.say(cYellow, "[caution] iOS "+version+" is outside the range Omega was proven on (iOS 16-18)")
+		u.say(cWhite, "  "+why)
+		u.say(cYellow, "  make a full backup before continuing — you are the first line of defense here")
+	case device.Supported:
+		u.say(cGreen, "[supported] iOS "+version+" is in Omega's proven window (16-18)")
+		u.say(cYellow, "  reminder: turn Find My OFF and make a backup before continuing")
+	}
+	u.say(cWhite, "  the restore replaces the revoke + certificate databases; your apps stay installed")
+	if u.readLine("type CONTINUE to run the restore (anything else backs out): ") != "CONTINUE" {
+		u.say(cYellow, "cancelled — nothing was changed")
+		return
+	}
+	last := float64(-25)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	out, rerr := u.runSpinning("restoring… the phone reboots by itself when done", func() error {
+		return u.Device.OmegaRestore(ctx, target.UDID, func(pct float64) {
+			if pct-last >= 25 {
+				log.Infof("restore progress: %.0f%%", pct)
+				last = pct
+			}
+		})
+	})
+	u.showResult(out, rerr, "omega restore")
+	if rerr == nil {
+		u.say(cWhite, "  the device reboots now — revoked apps and banned certificates are forgotten for good")
+	}
+}

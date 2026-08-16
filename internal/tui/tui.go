@@ -212,6 +212,7 @@ func (u *UI) categories() []category {
 				{"launch", "start an app by bundle id and learn its pid", "device → launch com.example.app", u.dvLaunch},
 				{"kill", "stop a process by its pid (from launch or apps)", "device → kill 1234", u.dvKill},
 				{"syslog", "watch parsed device logs stream by live — Enter stops", "device → syslog", u.dvSyslog},
+				{"omega", "clear the revoke + certificate blacklists so Apple can't re-revoke your sideloaded apps (jailbreak.party Omega)", "device → omega → CONTINUE", u.dvOmega},
 			},
 		},
 		{

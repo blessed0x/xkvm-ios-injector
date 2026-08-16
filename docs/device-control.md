@@ -81,6 +81,21 @@ Kind → exit codes 65–69. Wrapped with `%w` from go-ios so upstream strings
 survive. Timeouts via `context.WithTimeout` (dial-tolerant retry ×2 on
 "connection refused" only — pairing and install are NOT retried silently).
 
+## 4b. Omega (blacklist remover) — ported feature
+
+`device omega` reimplements jailbreak.party Omega in Go over go-ios: build
+the 17-record MBDB in memory (`internal/device/mbdb.go`, golden-pinned),
+speak the mobilebackup2 device-link protocol (`internal/device/restore.go`:
+4-byte length + plist frames, DLMessageVersionExchange/ProcessMessage/
+DownloadFiles/StatusResponse, chunk codes 0xC/0x0, zero terminator),
+replace DatabaseDomain MobileIdentityData + ProtectedDomain trustd
+databases with directories, inject the two skip-setup plists, reboot via
+diagnostics. Version policy: 16-18 supported / 19-26 untested (caution) /
+<16 and >=27 hard block (KindUnsupported, exit 66) — Omega's own README
+warns iOS 27 restores can reset data. Protocol core fully driven by a
+scripted peer over net.Pipe in tests (handshake, options, payload
+byte-equality, Find My refusal, crash_on_purpose, missing-file path).
+
 ## 5. Architecture
 
 cmd/xkvm (cobra) → internal/device (orchestration, retries, typed errors)

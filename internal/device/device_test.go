@@ -110,7 +110,11 @@ func (f *fake) Syslog(ctx context.Context, udid string, w io.Writer) error {
 	}
 	return f.syslogErr
 }
-func (f *fake) Restart(ctx context.Context, udid string) error  { f.restarts++; return nil }
+func (f *fake) Restart(ctx context.Context, udid string) error { f.restarts++; return nil }
+func (f *fake) OmegaRestore(ctx context.Context, udid string, progress func(float64)) error {
+	f.pairCalls = append(f.pairCalls, pairCall{udid, nil})
+	return nil
+}
 func (f *fake) Shutdown(ctx context.Context, udid string) error { f.shutdowns++; return nil }
 
 func TestResolveNoDevicesGivesRemediation(t *testing.T) {
@@ -186,6 +190,7 @@ func TestExitCodeTaxonomy(t *testing.T) {
 		{&Error{Kind: KindPermission}, 67},
 		{&Error{Kind: KindTimeout}, 68},
 		{&Error{Kind: KindConnection}, 69},
+		{&Error{Kind: KindUnsupported}, 66},
 		{&Error{Kind: KindInternal}, 70},
 		{fmtWrap(&Error{Kind: KindNotFound}), 65},
 	}

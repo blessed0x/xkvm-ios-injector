@@ -24,6 +24,7 @@ type stubDev struct {
 	launchErr   error
 	kills       []uint64
 	syslogLines string
+	omegaRuns   int
 }
 
 func (s *stubDev) Close() error { return nil }
@@ -61,7 +62,14 @@ func (s *stubDev) Syslog(ctx context.Context, udid string, w io.Writer) error {
 	<-ctx.Done()
 	return nil
 }
-func (s *stubDev) Restart(ctx context.Context, udid string) error  { return nil }
+func (s *stubDev) Restart(ctx context.Context, udid string) error { return nil }
+func (s *stubDev) OmegaRestore(ctx context.Context, udid string, progress func(float64)) error {
+	s.omegaRuns++
+	if progress != nil {
+		progress(100)
+	}
+	return nil
+}
 func (s *stubDev) Shutdown(ctx context.Context, udid string) error { return nil }
 
 func devUI(t *testing.T, s *stubDev, input string) string {
@@ -165,5 +173,51 @@ func TestTUIDevPairSurfacesTrustError(t *testing.T) {
 	out := devUI(t, s, "4\n1\nq\n")
 	if !strings.Contains(out, "Trust") {
 		t.Errorf("pair remediation missing:\n%s", out)
+	}
+}
+
+func TestTUIDevOmegaSupportedRuns(t *testing.T) {
+	s := &stubDev{info: device.Info{Name: "Phone", ProductVersion: "18.5"}}
+	out := devUI(t, s, "4\n9\nCONTINUE\nq\n")
+	for _, want := range []string{"[supported]", "omega restore"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("omega supported flow missing %q:\n%s", want, out)
+		}
+	}
+	if s.omegaRuns != 1 {
+		t.Errorf("omega ran %d times, want 1", s.omegaRuns)
+	}
+}
+
+func TestTUIDevOmegaUntestedCaution(t *testing.T) {
+	s := &stubDev{info: device.Info{Name: "Phone", ProductVersion: "24.0"}}
+	out := devUI(t, s, "4\n9\nq\n")
+	if !strings.Contains(out, "[caution]") || !strings.Contains(out, "16-18") {
+		t.Errorf("untested caution missing:\n%s", out)
+	}
+	if s.omegaRuns != 0 {
+		t.Error("backing out at the gate must not run the restore")
+	}
+}
+
+func TestTUIDevOmegaHardBlockNeverRuns(t *testing.T) {
+	s := &stubDev{info: device.Info{Name: "Phone", ProductVersion: "27.0"}}
+	out := devUI(t, s, "4\n9\nq\n")
+	if !strings.Contains(out, "[hard block]") || !strings.Contains(out, "will not run") {
+		t.Errorf("hard block missing:\n%s", out)
+	}
+	if s.omegaRuns != 0 {
+		t.Error("restore must never run when blocked")
+	}
+}
+
+func TestTUIDevOmegaGateCancelsOnAnythingElse(t *testing.T) {
+	s := &stubDev{info: device.Info{Name: "Phone", ProductVersion: "18.5"}}
+	out := devUI(t, s, "4\n9\nmeh\nq\n")
+	if !strings.Contains(out, "cancelled") {
+		t.Errorf("cancel wording missing:\n%s", out)
+	}
+	if s.omegaRuns != 0 {
+		t.Error("restore ran after a refused gate")
 	}
 }

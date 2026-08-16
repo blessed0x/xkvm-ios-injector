@@ -204,7 +204,17 @@ xkvm device pair                  # tap "Trust" on the phone, run again
 xkvm device install App-Tweaked.ipa   # stream it straight onto the device
 xkvm device launch com.example.app    # run it, print the pid
 xkvm device syslog                # parsed logs, Ctrl-C to stop
+xkvm device omega                 # clear revoke + cert blacklists (Omega)
 ```
+
+`device omega` is the jailbreak.party [Omega](https://github.com/jailbreakdotparty/Omega)
+blacklist remover, ported to the native stack: a partial-backup restore that
+replaces the revoke and certificate-validity databases with directories the
+system can't write to — Apple forgets every revoke. Version policy: iOS 16-18
+supported, 19-26 untested (caution), <16 and >=27 hard-blocked (on iOS 27 the
+backup system changed; the restore could reset your data). Turn off Find My
+and back up first; it asks you to type CONTINUE. Same feature lives in the
+TUI under device → omega.
 
 `device` is the other half of the loop: build the .ipa with `inject`,
 install it with `device`, watch its logs with `device syslog` — no
@@ -215,7 +225,7 @@ same control surface is in the TUI under the `device` category — pair,
 info, battery, apps (launch/uninstall the picked app), install, launch
 by bundle id, kill by pid, and a live syslog screen.
 
-Note for iOS 17+: `launch`/`kill`/`install` need a developer tunnel the
+Note for iOS 17+: `launch`/`kill`/`install`/`omega` need a developer tunnel the
 same way pymobiledevice3 needs a mounted Developer Disk Image; xkvm tells
 you the exact command when it hits that gate. `pair`/`info`/`battery`/
 `apps` work without it, and one physical phone showing up on both USB and

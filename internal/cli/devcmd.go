@@ -324,7 +324,101 @@ When more than one device is connected, pick one with --udid.`,
 	restart.Flags().BoolVar(&forceYes, "yes", false, "skip the confirmation prompt (scripts)")
 	shutdown.Flags().BoolVar(&forceYes, "yes", false, "skip the confirmation prompt (scripts)")
 
-	cmd.AddCommand(list, pair, info, battery, apps, install, uninstall, launch, kill, syslogCmd, restart, shutdown)
+	var (
+		iosVer     string
+		omegaForce bool
+	)
+	omega := &cobra.Command{
+		Use:   "omega [--ios X.Y] [--yes]",
+		Short: "clear the app-revoke + certificate blacklists (jailbreak.party Omega)",
+		Long: `omega runs the jailbreak.party Omega restore: it replaces the device's
+app-revoke and certificate-validity databases with empty directories, so
+the system can never write a new revoke into them — revoked or
+certificate-banned sideloaded apps start working again, permanently
+(until a data wipe).
+
+The iOS version is detected from the connected device; --ios X.Y
+overrides. Policy: iOS 16-18 is the proven window (supported), 19-26 gets
+a caution (untested — nobody verified Omega there yet), and <16 or >=27 is
+a hard block: on iOS 27 the backup system changed and this restore can
+reset your data or settings, so xkvm refuses to run it.
+
+Before running: turn OFF Find My (Settings → your name → Find My) and
+make a backup. The phone reboots by itself when the restore finishes.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			// Version policy first: an explicit --ios must hard-block (or
+			// gate) without any device attached — it is pure math, and the
+			// block exists to protect the user before anything runs.
+			verdict := device.Supported
+			why := ""
+			var verr error
+			if iosVer != "" {
+				verdict, why, verr = device.OmegaVerdict(iosVer)
+				if verr != nil {
+					return verr
+				}
+			}
+			dh := h()
+			defer dh.Close()
+			var (
+				target  device.Dev
+				version string
+				err     error
+			)
+			if iosVer == "" {
+				target, err = resolveUDID(cmd, dh, udid)
+				if err != nil {
+					return err
+				}
+				info, ierr := dh.Info(cmd.Context(), target.UDID)
+				if ierr != nil {
+					return fmt.Errorf("reading the device's iOS version (or set --ios): %w", ierr)
+				}
+				version = info.ProductVersion
+				verdict, why, verr = device.OmegaVerdict(version)
+				if verr != nil {
+					return verr
+				}
+			} else {
+				version = iosVer
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "device ios: %s — omega on this version is %s\n", version, verdict)
+			switch verdict {
+			case device.Unsupported:
+				return &device.Error{Kind: device.KindUnsupported, Op: "omega", Err: fmt.Errorf("%s: %s", version, why),
+					Remediation: "hard block — xkvm will not run the Omega restore on this iOS version.\n  This is to protect your data: " + why}
+			case device.Untested:
+				fmt.Fprintln(cmd.OutOrStdout(), "[caution] this iOS version is outside the range Omega was proven on.")
+				fmt.Fprintln(cmd.OutOrStdout(), "  "+why)
+				fmt.Fprintln(cmd.OutOrStdout(), "  back up first. the restore replaces those databases and reboots the phone.")
+			case device.Supported:
+				fmt.Fprintln(cmd.OutOrStdout(), "[reminder] turn Find My OFF and make a backup before continuing.")
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), "the restore replaces the revoke + certificate databases — your sideloaded apps stay, the blacklists go")
+			if !omegaForce && !gateContinue(cmd) {
+				return &device.Error{Kind: device.KindUsage, Op: "omega",
+					Err:         fmt.Errorf("not confirmed"),
+					Remediation: "type CONTINUE to proceed (or --yes for scripts)"}
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), "restoring… the phone reboots by itself when done (takes a few minutes)")
+			last := float64(-25)
+			if err := dh.OmegaRestore(cmd.Context(), target.UDID, func(pct float64) {
+				if pct-last >= 25 {
+					fmt.Fprintf(cmd.OutOrStdout(), "restore progress: %.0f%%\n", pct)
+					last = pct
+				}
+			}); err != nil {
+				return err
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), "[ok] omega restore complete — the device reboots now: revoked apps and banned certificates are forgotten for good")
+			return nil
+		},
+	}
+	omega.Flags().StringVar(&iosVer, "ios", "", "iOS version override (X.Y) — normally detected from the device")
+	omega.Flags().BoolVar(&omegaForce, "yes", false, "skip the CONTINUE confirmation (scripts)")
+
+	cmd.AddCommand(list, pair, info, battery, apps, install, uninstall, launch, kill, syslogCmd, restart, shutdown, omega)
 	return cmd
 }
 

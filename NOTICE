@@ -89,3 +89,18 @@ reference only, see the package doc comment): the four keys are
 Apple-defined functional entitlement data (`platform-application`,
 `com.apple.private.security.no-sandbox`, and the AppBundles/
 AppDataContainers storage grants), not creative expression.
+
+## Omega (jailbreak.party blacklist remover) — MIT
+
+- **Component:** the Omega restore set for the `xkvm device omega`
+  command — the exact domains/paths, record modes, skip-setup plists
+  (`internal/device/omega_files/`), and the device-link protocol shape
+  (mbdb codec + mobilebackup2 restore flow, as driven by
+  sparserestore/TrollRestore via pymobiledevice3).
+- **Upstream:** https://github.com/jailbreakdotparty/Omega (MIT,
+  copyright (c) 2026 jailbreak.party). Ported from Python to Go; the
+  payload files are embedded verbatim.
+- **Purpose:** clears the app-revoke and certificate-validity databases
+  via a partial backup restore. Use at your own risk — make a backup and
+  turn off Find My first; xkvm hard-blocks iOS 27 (upstream's own warning:
+  restores there can reset data).
