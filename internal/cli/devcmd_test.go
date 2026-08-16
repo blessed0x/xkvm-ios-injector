@@ -5,6 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -291,5 +294,50 @@ func TestOmegaPolicyBeforeDevice(t *testing.T) {
 	}
 	if stub.omegaRuns != 0 {
 		t.Error("restore must never run")
+	}
+}
+
+func TestDeviceDoctorUnreachable(t *testing.T) {
+	t.Setenv("USBMUXD_SOCKET_ADDRESS", "tcp://127.0.0.1:1") // nothing listens here
+	var out bytes.Buffer
+	cmd := newDeviceCmd()
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"doctor"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("doctor succeeded against an unreachable transport")
+	}
+	if device.ExitCode(err) != 69 {
+		t.Errorf("doctor exit code = %d, want 69", device.ExitCode(err))
+	}
+	if !strings.Contains(err.Error(), "127.0.0.1:27015") && !strings.Contains(err.Error(), "usbmuxd") {
+		t.Errorf("doctor error missing transport hint: %v", err)
+	}
+}
+
+func TestDeviceDoctorReachable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix socket fixtures are not meaningful on windows")
+	}
+	dir := t.TempDir()
+	sock := filepath.Join(dir, "usbmuxd")
+	l, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	t.Setenv("USBMUXD_SOCKET_ADDRESS", "unix://"+sock)
+
+	var out bytes.Buffer
+	cmd := newDeviceCmd()
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"doctor"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "transport ready") {
+		t.Errorf("doctor success output missing ready line: %q", out.String())
 	}
 }

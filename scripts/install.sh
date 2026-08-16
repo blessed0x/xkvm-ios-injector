@@ -8,6 +8,39 @@
 #
 # Installs to ~/.local/bin by default (respect XKVM_PREFIX to override).
 set -euo pipefail
+# --- intro (moon scene, terminal-safe) -------------------------------------
+# Full moon art when stdout is a real terminal; one deterministic plain line
+# when piped into a file, CI, or NO_COLOR is set — so this never breaks
+# `curl | bash` automation.
+intro() {
+  if [ -t 1 ]; then
+    BOLD=""; MG=""; CY=""; YL=""; DM=""; RS=""
+    if [ -z "${NO_COLOR:-}" ]; then
+      BOLD=$'\033[1m'; MG=$'\033[35m'; CY=$'\033[36m'; YL=$'\033[33m'; DM=$'\033[90m'; RS=$'\033[0m'
+    fi
+    printf '%s\n' \
+      "${DM}               ·                          ✧${RS}" \
+      "${YL}     ✧                       .${RS}" \
+      "${CY}                 ▄▄▄▄▓▓▄▄▄▄${RS}" \
+      "${CY}       .       ▄▓▓▓██░░░░░░░▀▄${RS}" \
+      "${CY}             ▄▓▓██░░░░░  ✧  ░░▀▄${RS}" \
+      "${CY}            ▄▓██░░░░░  ✵      ░░▀▄${RS}" \
+      "${CY}  ✧        ▄▓█░░░░░░            ░▐█▄${RS}" \
+      "${CY}           ▐█▌░░░░░░            ░░██${RS}" \
+      "${CY}            ▀█▄░░░░░          ░░▄█▀${RS}" \
+      "${CY}             ▀██▄░░░░░      ░░▄█▀${RS}" \
+      "${CY}      .        ▀▀████▓▄▄▄▄▄██▀▀${RS}" \
+      "${DM}                 ✧            ✦${RS}" \
+      "${DM}        ·                        ✧${RS}" \
+      "${BOLD}${MG}   x k v m${RS}" \
+      "${CY}   the friendly way to tweak your iOS apps${RS}" \
+      "${DM}   installing on $(uname -s) via ${PREFIX:-~/.local/bin}${RS}" \
+      ""
+  else
+    printf '%s\n' "xkvm — the friendly way to tweak your iOS apps"
+  fi
+}
+
 
 REPO="xscope0/xkvm-ios-injector"
 VERSION="${XKVM_VERSION:-latest}"
@@ -38,6 +71,7 @@ BIN="$PREFIX/xkvm"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
+intro
 echo "xkvm: installing to $PREFIX"
 
 # --- figure out the release to grab ----------------------------------------

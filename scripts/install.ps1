@@ -8,6 +8,37 @@
 # Or with the script on disk:
 #   powershell -ExecutionPolicy Bypass -File install.ps1
 $ErrorActionPreference = "Stop"
+# --- intro (moon scene, terminal-safe) -------------------------------------
+# Full moon art when the output is a real console and NO_COLOR is unset; a
+# single deterministic plain line otherwise, so irm | iex automation is safe.
+function Show-XkvmIntro {
+    $plain = [Console]::IsOutputRedirected -or ($env:NO_COLOR -and $env:NO_COLOR -ne "")
+    if (-not $plain) {
+        $MG = "$([char]27)[35m"; $CY = "$([char]27)[36m"; $YL = "$([char]27)[33m"
+        $DM = "$([char]27)[90m"; $B  = "$([char]27)[1m"; $RS = "$([char]27)[0m"
+        Write-Host "$DM               ·                          ✧$RS"
+        Write-Host "$YL     ✧                       .$RS"
+        Write-Host "$CY                 ▄▄▄▄▓▓▄▄▄▄$RS"
+        Write-Host "$CY       .       ▄▓▓▓██░░░░░░░▀▄$RS"
+        Write-Host "$CY             ▄▓▓██░░░░░  ✧  ░░▀▄$RS"
+        Write-Host "$CY            ▄▓██░░░░░  ✵      ░░▀▄$RS"
+        Write-Host "$CY  ✧        ▄▓█░░░░░░            ░▐█▄$RS"
+        Write-Host "$CY           ▐█▌░░░░░░            ░░██$RS"
+        Write-Host "$CY            ▀█▄░░░░░          ░░▄█▀$RS"
+        Write-Host "$CY             ▀██▄░░░░░      ░░▄█▀$RS"
+        Write-Host "$CY      .        ▀▀████▓▄▄▄▄▄██▀▀$RS"
+        Write-Host "$DM                 ✧            ✦$RS"
+        Write-Host "$DM        ·                        ✧$RS"
+        Write-Host "$B$MG   x k v m$RS"
+        Write-Host "$CY   the friendly way to tweak your iOS apps$RS"
+        Write-Host "$DM   installing on Windows$RS"
+        Write-Host ""
+    } else {
+        Write-Host "xkvm — the friendly way to tweak your iOS apps"
+    }
+}
+}
+
 
 $Repo    = "xscope0/xkvm-ios-injector"
 $ApiUrl  = "https://api.github.com/repos/$Repo/releases/latest"
@@ -15,6 +46,7 @@ $BinDir  = Join-Path $env:USERPROFILE ".local\bin"
 $BinPath = Join-Path $BinDir "xkvm.exe"
 
 New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
+Show-XkvmIntro
 Write-Host "xkvm: installing to $BinDir"
 
 $Release = $null

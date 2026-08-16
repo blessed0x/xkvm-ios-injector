@@ -20,6 +20,7 @@ loop: **pair → inspect → install → launch → observe**. Same transport fa
 | op | action | go-ios call |
 |---|---|---|
 | `list` | USB + network devices | `ios.ListDevices()` |
+| `doctor` | probe the usbmuxd endpoint (`unix`/`tcp`) + per-OS prerequisites | `ios.GetUsbmuxdSocket()` + dial/stat |
 | `pair` | standard trust-dialog pairing; `--supervised p12:pw` | `ios.Pair` / `ios.PairSupervised` |
 | `info` | lockdown values (name/version/type/color…) | `lockdown GetValues` |
 | `battery` | battery diagnostics | `ios.GetBatteryDiagnostics` |
@@ -32,7 +33,16 @@ loop: **pair → inspect → install → launch → observe**. Same transport fa
 
 Flags: `--udid` (resolve ambiguity), `--network` (prefer network transports),
 `--timeout` (per-service dial default 15s), `--json` (machine output for
-`info`/`apps`/`battery`).
+`info`/`apps`/`battery`/`doctor`).
+
+**Transport prerequisites (per OS)** — `xkvm device doctor` probes the exact
+endpoint go-ios will dial, honoring `USBMUXD_SOCKET_ADDRESS`, and prints a
+per-OS fix when it is not reachable: macOS runs usbmuxd by default (replug +
+re-trust); Linux needs the `usbmuxd` package started (`sudo apt install
+usbmuxd` / `sudo pacman -S usbmuxd`, socket `/var/run/usbmuxd`); Windows
+needs iTunes or the Microsoft Store **Apple Devices** app, which provides
+usbmuxd on `tcp://127.0.0.1:27015`. The same per-OS hint is attached to
+every `list`/resolve KindConnection error.
 
 ## 3. Workflows (data flow + error policy)
 

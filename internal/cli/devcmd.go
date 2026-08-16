@@ -44,6 +44,7 @@ watch its logs — no SideStore or Xcode needed.
 Subcommands:
 
   xkvm device list                show connected devices (UDID + transport)
+  xkvm device doctor              check usbmuxd is reachable + OS prerequisites
   xkvm device pair                trust a device (tap "Trust" when asked)
   xkvm device info                name, iOS version, model, color, build
   xkvm device battery             battery capacity and charging state
@@ -95,6 +96,29 @@ When more than one device is connected, pick one with --udid.`,
 			})
 		}}
 	list.Flags().BoolVar(&showJSON, "json", false, "machine-readable output")
+
+	doctor := &cobra.Command{Use: "doctor", Short: "check the device transport is ready",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			d := device.ProbeTransport()
+			if showJSON {
+				enc := json.NewEncoder(cmd.OutOrStdout())
+				enc.SetIndent("", "  ")
+				if err := enc.Encode(d); err != nil {
+					return err
+				}
+				if d.Reachable {
+					return nil
+				}
+				return device.ErrTransport(d)
+			}
+			if d.Reachable {
+				fmt.Fprintf(cmd.OutOrStdout(), "device transport ready  %s (%s)\n", d.Address, d.OS)
+				return nil
+			}
+			return device.ErrTransport(d)
+		}}
+	doctor.Flags().BoolVar(&showJSON, "json", false, "machine-readable output")
 
 	pair := &cobra.Command{Use: "pair", Short: "trust the device (tap Trust on its screen)",
 		Args: cobra.NoArgs,
@@ -418,7 +442,7 @@ make a backup. The phone reboots by itself when the restore finishes.`,
 	omega.Flags().StringVar(&iosVer, "ios", "", "iOS version override (X.Y) — normally detected from the device")
 	omega.Flags().BoolVar(&omegaForce, "yes", false, "skip the CONTINUE confirmation (scripts)")
 
-	cmd.AddCommand(list, pair, info, battery, apps, install, uninstall, launch, kill, syslogCmd, restart, shutdown, omega)
+	cmd.AddCommand(list, doctor, pair, info, battery, apps, install, uninstall, launch, kill, syslogCmd, restart, shutdown, omega)
 	return cmd
 }
 

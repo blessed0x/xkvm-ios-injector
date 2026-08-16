@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"runtime"
 	"strings"
 	"time"
 
@@ -43,7 +44,7 @@ func (g *GoIOS) entry(ctx context.Context, udid string) (ios.DeviceEntry, error)
 	}
 	list, err := ios.ListDevices()
 	if err != nil {
-		return ios.DeviceEntry{}, g.wrap(KindConnection, "list devices", "is usbmuxd running? (default on macOS; start it on Linux first)", err)
+		return ios.DeviceEntry{}, g.wrap(KindConnection, "list devices", transportRemediation(runtime.GOOS), err)
 	}
 	var fallback *ios.DeviceEntry
 	for i := range list.DeviceList {
@@ -71,7 +72,7 @@ func (g *GoIOS) List(ctx context.Context) ([]Dev, error) {
 	}
 	list, err := ios.ListDevices()
 	if err != nil {
-		return nil, g.wrap(KindConnection, "list devices", "is usbmuxd running? (default on macOS; start it on Linux first)", err)
+		return nil, g.wrap(KindConnection, "list devices", transportRemediation(runtime.GOOS), err)
 	}
 	out := make([]Dev, 0, len(list.DeviceList))
 	for _, d := range list.DeviceList {
@@ -447,5 +448,6 @@ func tunnelGate(err error) bool {
 
 const tunnelRemediation = "iOS 17+ gated the process-control and install services behind a developer tunnel:\n" +
 	"  go run github.com/danielpaulus/go-ios@v1.3.2 tunnel start --userspace --udid <UDID>\n" +
-	"in a second terminal, then retry. (Same prerequisite as pymobiledevice3's\n" +
-	"Developer Disk Image mount — nothing is wrong with the device.)"
+	"in a second terminal, then retry. --userspace needs no admin on macOS, Linux,\n" +
+	"or Windows; the same prerequisite as pymobiledevice3's Developer Disk Image\n" +
+	"mount — nothing is wrong with the device."
