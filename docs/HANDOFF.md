@@ -73,6 +73,7 @@ Root: `xkvm [flags] -i <app>` (inject). Every other verb is a subcommand.
 | `xkvm fetch`-equivalent | **Folded into inject**: `-f <repo-package-id> --fetch` resolves through Canister/MobileAPT (M4) |
 | `xkvm cache [--clear]` | Show or empty the persistent fetch cache (`~/Library/Caches/xkvm/fetch`, 7-day TTL) |
 | `xkvm decrypt <app-id\|app-store-url\|bundle-id>` | Download an App Store app by Apple ID (bag → auth → buy → sinfs + metadata) |
+| `xkvm device <op>` | Control a connected iPhone/iPad via go-ios: list/pair/info/battery/apps/install/uninstall/launch/kill/syslog/restart/shutdown (`--udid`, `--json`; policy + errors in docs/device-control.md) |
 
 ### Key root flags (inject)
 

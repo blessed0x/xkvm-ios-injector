@@ -848,6 +848,19 @@ the same Apple ID, not installed, has valid versions).
 
 ---
 
+
+### 5.9 Device control (M5.5)
+
+`xkvm device` — pair/info/battery/apps/install/uninstall/launch/kill/syslog/
+restart/shutdown — closes the sideloading loop on real hardware. Backed by
+`github.com/danielpaulus/go-ios` (v1.3.x, pure Go: lockdownd, zip-conduit,
+process control). Policy lives in `internal/device`: no-guess device
+resolution (+error listing candidates), typed errors with remediation text
+and exit codes 64-70, per-op timeouts; all data output goes to stdout, all
+progress to the log stream, `--json` for machine use. Hermetic via the
+Handler seam; live tests behind `go test -tags live`. Blueprint:
+`docs/device-control.md`.
+
 ## 6. Pipeline (parity with `logic.py`, extended)
 
 ```

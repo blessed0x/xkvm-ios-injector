@@ -194,6 +194,23 @@ xkvm decrypt --logout                                            # forget the sa
 | `cyan-check` | Validate a `.cyan` config file before applying it |
 | `cgen` | Turn your flags into a shareable `.cyan` config file |
 | `decrypt` | Download an App Store app by Apple ID (with sinfs + metadata) for tweaking |
+| `device` | Control a connected iPhone/iPad: pair, info, install, launch, syslog (go-ios) |
+
+### Device control in one breath
+
+```bash
+xkvm device list                  # who's plugged in
+xkvm device pair                  # tap "Trust" on the phone, run again
+xkvm device install App-Tweaked.ipa   # stream it straight onto the device
+xkvm device launch com.example.app    # run it, print the pid
+xkvm device syslog                # parsed logs, Ctrl-C to stop
+```
+
+`device` is the other half of the loop: build the .ipa with `inject`,
+install it with `device`, watch its logs with `device syslog` — no
+SideStore or Xcode. Backed by [go-ios](https://github.com/danielpaulus/go-ios)
+(the same pure-Go talk-to-Apple stack as the Mach-O tooling). See
+[docs/device-control.md](docs/device-control.md) for the full surface.
 
 ## Common options
 
@@ -237,6 +254,7 @@ Run `xkvm --help` for the complete list.
 | M3 | Pure-Go Mach-O (go-macho / codesign) | done |
 | M4 | Azule fetch: Canister / MobileAPT | done |
 | M5 | iOS on-device: decrypt, cross-compile | planned |
+| M5.5 | Device control: pair/install/launch/syslog (go-ios) | done |
 | M6 | Ship: brew tap, releases, docs | planned |
 
 ## Contributing

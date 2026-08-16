@@ -13,6 +13,7 @@ import (
 
 	dsnetbzip2 "github.com/dsnet/compress/bzip2"
 	"github.com/klauspost/compress/zstd"
+	"github.com/pierrec/lz4/v4"
 	"github.com/ulikunitz/xz"
 	"github.com/ulikunitz/xz/lzma"
 )
@@ -54,7 +55,7 @@ func writeAr(t *testing.T, path string, members []testMember) {
 	}
 }
 
-func tarBytes(t *testing.T, files map[string]string) []byte {
+func tarBytes(t testing.TB, files map[string]string) []byte {
 	t.Helper()
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
@@ -100,6 +101,10 @@ func compress(t *testing.T, data []byte, ext string) []byte {
 			_, err = w.Write(data)
 			w.Close()
 		}
+	case ".lz4":
+		w := lz4.NewWriter(&buf)
+		_, err = w.Write(data)
+		w.Close()
 	case ".bz2":
 		w, e := dsnetbzip2.NewWriter(&buf, nil)
 		err = e
@@ -136,7 +141,7 @@ func dataMember(t *testing.T, ext string) testMember {
 }
 
 func TestExtractAllCompressions(t *testing.T) {
-	for _, ext := range []string{".gz", ".xz", ".zst", ".bz2", ".lzma", ""} {
+	for _, ext := range []string{".gz", ".xz", ".zst", ".bz2", ".lz4", ".lzma", ""} {
 		t.Run(ext, func(t *testing.T) {
 			debPath := filepath.Join(t.TempDir(), "t.deb")
 			writeAr(t, debPath, []testMember{

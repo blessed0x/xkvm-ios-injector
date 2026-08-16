@@ -1,7 +1,7 @@
 // Package deb extracts jailbreak tweak packages (.deb) and returns the
 // injectable artifacts (dylibs, frameworks, appex, bundles) that cyan's
 // extract_deb collects. Compression of data.tar.* is detected by name:
-// gzip, xz, zstd, bzip2, lzma, or raw tar.
+// gzip, xz, zstd, bzip2, lz4, lzma, or raw tar.
 //
 // GNU ar long-name string tables ("//") and symbol tables ("/") are skipped;
 // deb member names are short, so no table resolution is needed.
@@ -13,6 +13,7 @@ import (
 	"compress/gzip"
 	"errors"
 	"fmt"
+	"github.com/pierrec/lz4/v4"
 	"io"
 	"os"
 	"path/filepath"
@@ -109,6 +110,10 @@ func decompressorFor(name string, r io.Reader) (io.Reader, io.Closer, error) {
 		}
 		// klauspost's Decoder.Close returns no error, so wrap it.
 		return zr.IOReadCloser(), closeFunc(zr.Close), nil
+	case strings.HasSuffix(name, ".lz4"):
+		// LZ4 frame format (what `lz4` and dpkg's lz4 variant write); the
+		// legacy raw-block format is not a .tar.lz4 member.
+		return lz4.NewReader(r), io.NopCloser(nil), nil
 	case strings.HasSuffix(name, ".bz2"):
 		return bzip2.NewReader(r), io.NopCloser(nil), nil
 	case strings.HasSuffix(name, ".lzma"):

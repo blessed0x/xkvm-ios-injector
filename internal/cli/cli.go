@@ -14,6 +14,7 @@ import (
 	"github.com/xscope0/xkvm-ios-injector/internal/app"
 	"github.com/xscope0/xkvm-ios-injector/internal/cyanfile"
 	"github.com/xscope0/xkvm-ios-injector/internal/decrypt"
+	"github.com/xscope0/xkvm-ios-injector/internal/device"
 	"github.com/xscope0/xkvm-ios-injector/internal/fetch"
 	"github.com/xscope0/xkvm-ios-injector/internal/log"
 	"github.com/xscope0/xkvm-ios-injector/internal/patch"
@@ -29,11 +30,13 @@ type Runner func(ctx context.Context, opts *app.Options) error
 // it to tui.New().Start.
 type TUIStarter func()
 
-// Main builds and executes the root command, mapping any error to a non-zero exit.
+// Main builds and executes the root command, mapping any error to a
+// non-zero exit. Device-control errors carry their own exit codes
+// (64-70); everything else exits 1.
 func Main() {
 	if err := NewRootCmd(app.Run, tui.New().Start).Execute(); err != nil {
 		log.Errorf("%v", err)
-		os.Exit(1)
+		os.Exit(device.ExitCode(err))
 	}
 }
 
@@ -170,6 +173,7 @@ to the -i input; the result is written to -o, or overwrites the input.`,
 	cmd.AddCommand(newRoothideCmd())
 	cmd.AddCommand(newCacheCmd())
 	cmd.AddCommand(newDecryptCmd())
+	cmd.AddCommand(newDeviceCmd())
 	return cmd
 }
 
