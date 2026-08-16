@@ -356,11 +356,11 @@ func (u *UI) dvOmega() {
 		u.say(cYellow, "  this is for your own protection: the restore could reset your data. nothing was changed.")
 		return
 	case device.Untested:
-		u.say(cYellow, "[caution] iOS "+version+" is outside the range Omega was proven on (iOS 16-18)")
-		u.say(cWhite, "  "+why)
+		u.say(cYellow, "[caution] iOS "+version+" is a future/release nobody has verified Omega on yet")
+		u.say(cWhite, "  why: "+why)
 		u.say(cYellow, "  make a full backup before continuing — you are the first line of defense here")
 	case device.Supported:
-		u.say(cGreen, "[supported] iOS "+version+" is in Omega's proven window (16-18)")
+		u.say(cGreen, "[supported] iOS "+version+" — "+why)
 		u.say(cYellow, "  reminder: turn Find My OFF and make a backup before continuing")
 	}
 	u.say(cWhite, "  the restore replaces the revoke + certificate databases; your apps stay installed")
