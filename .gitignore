@@ -23,3 +23,9 @@
 
 # macOS
 .DS_Store
+
+CLAUDE.md
+AGENTS.md
+docs/PRD.md
+docs/TTD.md
+docs/ARCHITECTURE_OVERVIEW.md
