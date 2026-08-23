@@ -11,9 +11,11 @@ import (
 
 	"github.com/danielpaulus/go-ios/ios"
 	"github.com/danielpaulus/go-ios/ios/diagnostics"
+	"github.com/danielpaulus/go-ios/ios/forward"
 	"github.com/danielpaulus/go-ios/ios/installationproxy"
 	"github.com/danielpaulus/go-ios/ios/instruments"
 	"github.com/danielpaulus/go-ios/ios/ostrace"
+	"github.com/danielpaulus/go-ios/ios/pasteboard"
 	"github.com/danielpaulus/go-ios/ios/syslog"
 	"github.com/danielpaulus/go-ios/ios/zipconduit"
 
@@ -579,6 +581,71 @@ func (g *GoIOS) Screenshot(ctx context.Context, udid string) ([]byte, error) {
 		return nil, g.wrap(KindConnection, "screenshot", "unlock the device and try again", err)
 	}
 	return shot, nil
+}
+
+// Forward starts an iproxy-style relay: a local TCP listener on hostPort
+// whose every connection is piped to phonePort on the device over usbmuxd.
+// Works on every iOS version (plain lockdown service, no developer tunnel).
+func (g *GoIOS) Forward(ctx context.Context, udid string, hostPort, phonePort uint16) (io.Closer, error) {
+	dev, err := g.entry(ctx, udid)
+	if err != nil {
+		return nil, err
+	}
+	listener, err := forward.Forward(dev, hostPort, phonePort)
+	if err != nil {
+		return nil, g.wrap(KindConnection, "forward",
+			"is the port free on this machine, and is the device still trusted?", err)
+	}
+	return &forwardCloser{listener: listener}, nil
+}
+
+type forwardCloser struct{ listener *forward.ConnListener }
+
+func (f *forwardCloser) Close() error { return f.listener.Close() }
+
+// PasteboardGet reads the device clipboard text over its lockdown service.
+func (g *GoIOS) PasteboardGet(ctx context.Context, udid string) (string, bool, error) {
+	dev, err := g.entry(ctx, udid)
+	if err != nil {
+		return "", false, err
+	}
+	var (
+		text  string
+		found bool
+	)
+	err = g.run(ctx, func() error {
+		conn, err := pasteboard.New(dev)
+		if err != nil {
+			return err
+		}
+		defer conn.Close()
+		text, found, err = conn.GetText()
+		return err
+	})
+	if err != nil {
+		return "", false, g.wrap(KindConnection, "read clipboard", "unlock the device and try again", err)
+	}
+	return text, found, nil
+}
+
+// PasteboardSet writes text to the device clipboard.
+func (g *GoIOS) PasteboardSet(ctx context.Context, udid, text string) error {
+	dev, err := g.entry(ctx, udid)
+	if err != nil {
+		return err
+	}
+	err = g.run(ctx, func() error {
+		conn, err := pasteboard.New(dev)
+		if err != nil {
+			return err
+		}
+		defer conn.Close()
+		return conn.SetText(text)
+	})
+	if err != nil {
+		return g.wrap(KindConnection, "write clipboard", "unlock the device and try again", err)
+	}
+	return nil
 }
 
 // Watch streams usbmuxd attach/detach notifications until ctx is done or

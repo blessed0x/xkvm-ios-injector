@@ -28,6 +28,8 @@ type stubDevHandler struct {
 	shot         []byte
 	events       []device.WatchEvent
 	devMode      device.DevMode
+	forwardPorts [2]uint16
+	clipboardSet string
 }
 
 func (s *stubDevHandler) Close() error                                   { return nil }
@@ -71,6 +73,23 @@ func (s *stubDevHandler) Watch(ctx context.Context, fn func(device.WatchEvent) e
 func (s *stubDevHandler) DevModeStatus(ctx context.Context, udid string) (device.DevMode, error) {
 	return s.devMode, nil
 }
+func (s *stubDevHandler) Forward(ctx context.Context, udid string, hostPort, phonePort uint16) (io.Closer, error) {
+	s.forwardPorts = [2]uint16{hostPort, phonePort}
+	// Production returns the live listener immediately; the CLI owns the
+	// wait-on-ctx side of the contract.
+	return nopCloser{}, nil
+}
+func (s *stubDevHandler) PasteboardGet(ctx context.Context, udid string) (string, bool, error) {
+	return "clipboard text", true, nil
+}
+func (s *stubDevHandler) PasteboardSet(ctx context.Context, udid, text string) error {
+	s.clipboardSet = text
+	return nil
+}
+
+type nopCloser struct{}
+
+func (nopCloser) Close() error                                           { return nil }
 func (s *stubDevHandler) Restart(ctx context.Context, udid string) error { return nil }
 func (s *stubDevHandler) OmegaRestore(ctx context.Context, udid string, progress func(float64)) error {
 	s.omegaRuns++
@@ -492,5 +511,66 @@ func TestDeviceDevModeStatesRender(t *testing.T) {
 				t.Fatalf("want %q in %q", tc.want, out)
 			}
 		})
+	}
+}
+
+func TestDeviceForwardParsesPortsAndBlocksUntilCancel(t *testing.T) {
+	stub := &stubDevHandler{devs: []device.Dev{{UDID: "AAAA", Transport: device.TransportUSB}}}
+	orig := deviceHandler
+	deviceHandler = func(o device.Options) device.Handler { return stub }
+	t.Cleanup(func() { deviceHandler = orig })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+
+	var out bytes.Buffer
+	cmd := newDeviceCmd()
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetContext(ctx)
+	cmd.SetArgs([]string{"forward", "8080", "3999"})
+	if err := cmd.Execute(); err != nil && !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatal(err)
+	}
+	if stub.forwardPorts != [2]uint16{8080, 3999} {
+		t.Fatalf("ports must reach the handler in order, got %v", stub.forwardPorts)
+	}
+	if !strings.Contains(out.String(), "forwarding localhost:8080 -> AAAA:3999") {
+		t.Fatalf("forward banner missing: %q", out.String())
+	}
+}
+
+func TestDeviceForwardRejectsBadPorts(t *testing.T) {
+	for _, args := range [][]string{{"forward", "0", "80"}, {"forward", "99999", "80"}, {"forward", "abc", "80"}} {
+		out, err := runDeviceCmd(t, args[0], args[1:]...)
+		if err == nil || !strings.Contains(err.Error(), "not a TCP port") {
+			t.Fatalf("args %v must be rejected, got out=%q err=%v", args, out, err)
+		}
+	}
+}
+
+func TestDevicePasteboardGetSet(t *testing.T) {
+	stub := &stubDevHandler{devs: []device.Dev{{UDID: "AAAA", Transport: device.TransportUSB}}}
+	orig := deviceHandler
+	deviceHandler = func(o device.Options) device.Handler { return stub }
+	t.Cleanup(func() { deviceHandler = orig })
+
+	out, err := runDeviceCmdStub(t, stub, "pasteboard", "get")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out) != "clipboard text" {
+		t.Fatalf("get output mismatch: %q", out)
+	}
+
+	if _, err := runDeviceCmdStub(t, stub, "pasteboard", "set", "hello world"); err != nil {
+		t.Fatal(err)
+	}
+	if stub.clipboardSet != "hello world" {
+		t.Fatalf("set text must reach the handler, got %q", stub.clipboardSet)
+	}
+
+	if _, err := runDeviceCmdStub(t, stub, "pasteboard", "bogus"); err == nil {
+		t.Fatal("unknown pasteboard verb must fail")
 	}
 }

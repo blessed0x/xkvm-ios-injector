@@ -11,32 +11,39 @@ import (
 
 // fakeHandler records everything and returns scripted results.
 type fake struct {
-	closeCalls  int
-	listCalls   int
-	lists       [][]Dev
-	listErr     error
-	pairCalls   []pairCall
-	pairErr     error
-	infoCalls   int
-	infoVal     Info
-	infoErr     error
-	appsCalls   []appsCall
-	appsVal     []App
-	appsErr     error
-	installs    []installCall
-	installErr  error
-	uninstalls  []string
-	launchCalls []launchCall
-	launchPID   uint64
-	launchErr   error
-	killCalls   []uint64
-	killErr     error
-	syslogOut   string
-	syslogErr   error
-	watchEvents []WatchEvent
-	restarts    int
-	shutdowns   int
+	closeCalls   int
+	listCalls    int
+	lists        [][]Dev
+	listErr      error
+	pairCalls    []pairCall
+	pairErr      error
+	infoCalls    int
+	infoVal      Info
+	infoErr      error
+	appsCalls    []appsCall
+	appsVal      []App
+	appsErr      error
+	installs     []installCall
+	installErr   error
+	uninstalls   []string
+	launchCalls  []launchCall
+	launchPID    uint64
+	launchErr    error
+	killCalls    []uint64
+	killErr      error
+	syslogOut    string
+	syslogErr    error
+	watchEvents  []WatchEvent
+	forwardCalls [][2]uint16
+	clipboard    string
+	clipboardSet string
+	restarts     int
+	shutdowns    int
 }
+
+type nopCloser struct{}
+
+func (nopCloser) Close() error { return nil }
 
 // pngMagic is the smallest answer that satisfies the CLI's magic sniffing.
 var pngMagic = []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}
@@ -127,6 +134,17 @@ func (f *fake) Watch(ctx context.Context, fn func(WatchEvent) error) error {
 }
 func (f *fake) DevModeStatus(ctx context.Context, udid string) (DevMode, error) {
 	return DevMode{Enabled: true, Reported: true}, nil
+}
+func (f *fake) Forward(ctx context.Context, udid string, hostPort, phonePort uint16) (io.Closer, error) {
+	f.forwardCalls = append(f.forwardCalls, [2]uint16{hostPort, phonePort})
+	return nopCloser{}, nil
+}
+func (f *fake) PasteboardGet(ctx context.Context, udid string) (string, bool, error) {
+	return f.clipboard, f.clipboard != "", nil
+}
+func (f *fake) PasteboardSet(ctx context.Context, udid, text string) error {
+	f.clipboardSet = text
+	return nil
 }
 func (f *fake) Restart(ctx context.Context, udid string) error { f.restarts++; return nil }
 func (f *fake) OmegaRestore(ctx context.Context, udid string, progress func(float64)) error {

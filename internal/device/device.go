@@ -178,6 +178,15 @@ type Handler interface {
 	Watch(ctx context.Context, fn func(WatchEvent) error) error
 	// DevModeStatus reads the iOS 16+ Developer Mode switch over lockdown.
 	DevModeStatus(ctx context.Context, udid string) (DevMode, error)
+	// Forward listens on hostPort and relays every accepted connection to
+	// phonePort on the device over usbmuxd (iproxy semantics, every iOS
+	// version). Stop it via the returned Closer or by cancelling ctx.
+	Forward(ctx context.Context, udid string, hostPort, phonePort uint16) (io.Closer, error)
+	// PasteboardGet reads the device clipboard; the bool reports whether
+	// any text was present.
+	PasteboardGet(ctx context.Context, udid string) (string, bool, error)
+	// PasteboardSet writes text to the device clipboard.
+	PasteboardSet(ctx context.Context, udid, text string) error
 	OmegaRestore(ctx context.Context, udid string, progress func(float64)) error
 	Restart(ctx context.Context, udid string) error
 	Shutdown(ctx context.Context, udid string) error

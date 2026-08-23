@@ -64,6 +64,8 @@ Subcommands:
   xkvm device watch               live attach/detach events (Ctrl-C stops)
   xkvm device screenshot [f.png]  save a PNG of the screen (default: timestamped)
   xkvm device devmode             iOS 16+ Developer Mode switch status
+  xkvm device forward 8080 8080   iproxy-style relay, localhost -> device port
+  xkvm device pasteboard get|set  read or write the device clipboard
 
 iOS 17+ note: launch/kill/install/screenshot need a developer tunnel.
 xkvm starts one for you automatically when an operation needs it; set
@@ -525,8 +527,94 @@ make a backup. The phone reboots by itself when the restore finishes.`,
 			})
 		}}
 
-	cmd.AddCommand(list, doctor, pair, info, battery, apps, install, uninstall, launch, kill, syslogCmd, restart, shutdown, omega, watch, screenshot, devmode)
+	// forward: iproxy-style usbmuxd port relay (every iOS version).
+	forwardCmd := &cobra.Command{Use: "forward <host-port> <device-port>", Short: "relay localhost:<host> to the device's <device-port> (iproxy)",
+		Long: "forward listens on a local TCP port and pipes every connection to\n" +
+			"the same-numbered service on the device over usbmuxd — the classic\n" +
+			"iproxy contract. Works on every iOS version. Ctrl-C stops it.",
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			hostPort, err := parsePort(args[0])
+			if err != nil {
+				return err
+			}
+			phonePort, err := parsePort(args[1])
+			if err != nil {
+				return err
+			}
+			dh := h()
+			defer dh.Close()
+			target, err := resolveUDID(cmd, dh, udid)
+			if err != nil {
+				return err
+			}
+			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			defer stop()
+			closer, err := dh.Forward(ctx, target.UDID, hostPort, phonePort)
+			if err != nil {
+				return err
+			}
+			defer closer.Close()
+			fmt.Fprintf(cmd.OutOrStdout(), "forwarding localhost:%d -> %s:%d (Ctrl-C to stop)\n", hostPort, target.UDID, phonePort)
+			<-ctx.Done()
+			fmt.Fprintln(cmd.OutOrStdout(), "forward closed")
+			return nil
+		}}
+
+	// pasteboard: read or write the device clipboard.
+	pasteboardCmd := &cobra.Command{Use: "pasteboard <get|set> [text]", Short: "read or write the device clipboard",
+		Long: "pasteboard get prints the device clipboard text (empty output when\n" +
+			"the clipboard holds no text); pasteboard set writes text to it.",
+		Args: cobra.RangeArgs(1, 2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			dh := h()
+			defer dh.Close()
+			target, err := resolveUDID(cmd, dh, udid)
+			if err != nil {
+				return err
+			}
+			switch args[0] {
+			case "get":
+				if len(args) != 1 {
+					return fmt.Errorf("pasteboard get takes no text argument")
+				}
+				text, found, err := dh.PasteboardGet(cmd.Context(), target.UDID)
+				if err != nil {
+					return err
+				}
+				return printJSONOr(cmd, showJSON, map[string]string{"text": text}, func() error {
+					if found {
+						fmt.Fprintln(cmd.OutOrStdout(), text)
+					} else {
+						log.Infof("the device clipboard holds no text")
+					}
+					return nil
+				})
+			case "set":
+				if len(args) != 2 {
+					return fmt.Errorf("pasteboard set needs the text to write")
+				}
+				if err := dh.PasteboardSet(cmd.Context(), target.UDID, args[1]); err != nil {
+					return err
+				}
+				log.Infof("clipboard set")
+				return nil
+			default:
+				return fmt.Errorf("unknown pasteboard verb %q (use get or set)", args[0])
+			}
+		}}
+
+	cmd.AddCommand(list, doctor, pair, info, battery, apps, install, uninstall, launch, kill, syslogCmd, restart, shutdown, omega, watch, screenshot, devmode, forwardCmd, pasteboardCmd)
 	return cmd
+}
+
+// parsePort validates a decimal TCP port argument.
+func parsePort(s string) (uint16, error) {
+	n, err := strconv.ParseUint(s, 10, 16)
+	if err != nil || n == 0 {
+		return 0, fmt.Errorf("%q is not a TCP port (1-65535)", s)
+	}
+	return uint16(n), nil
 }
 
 // deviceScreenshot captures the screen and writes it to path — deriving a

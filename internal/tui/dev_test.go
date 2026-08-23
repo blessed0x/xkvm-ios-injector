@@ -72,6 +72,17 @@ func (s *stubDev) Watch(ctx context.Context, fn func(device.WatchEvent) error) e
 func (s *stubDev) DevModeStatus(ctx context.Context, udid string) (device.DevMode, error) {
 	return device.DevMode{Reported: true, Enabled: true}, nil
 }
+func (s *stubDev) Forward(ctx context.Context, udid string, hostPort, phonePort uint16) (io.Closer, error) {
+	return nopCloser{}, nil
+}
+func (s *stubDev) PasteboardGet(ctx context.Context, udid string) (string, bool, error) {
+	return "", false, nil
+}
+func (s *stubDev) PasteboardSet(ctx context.Context, udid, text string) error { return nil }
+
+type nopCloser struct{}
+
+func (nopCloser) Close() error                                    { return nil }
 func (s *stubDev) Restart(ctx context.Context, udid string) error { return nil }
 func (s *stubDev) OmegaRestore(ctx context.Context, udid string, progress func(float64)) error {
 	s.omegaRuns++
