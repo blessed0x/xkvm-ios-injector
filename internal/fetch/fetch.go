@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -250,6 +251,16 @@ func (r *resolver) download(ctx context.Context, id, repo, file, sha, version st
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		// Havoc (and repos like it) block direct downloads of PAID packages
+		// with 418 + a "must be downloaded through a package manager" body.
+		// Say that instead of a bare status code: the fix is buying it once
+		// in Sileo/Zebra and exporting the deb, not retrying.
+		if resp.StatusCode == http.StatusTeapot || resp.StatusCode == http.StatusPaymentRequired {
+			bodyHint, _ := readLimited(resp.Body, 4<<10)
+			if strings.Contains(strings.ToLower(string(bodyHint)), "paid") {
+				return "", fmt.Errorf("downloading %s: %s is a PAID package on %s — buy it once in Sileo/Zebra on a jailbroken device and export the .deb from there", url, id, repoHost(repo))
+			}
+		}
 		return "", fmt.Errorf("downloading %s: HTTP %d", url, resp.StatusCode)
 	}
 	body, err := readLimited(resp.Body, 1<<30) // 1 GiB cap; errors on overflow
@@ -265,6 +276,14 @@ func (r *resolver) download(ctx context.Context, id, repo, file, sha, version st
 		return "", err
 	}
 	return path, nil
+}
+
+// repoHost extracts the printable host from a repo base URL for error text.
+func repoHost(repo string) string {
+	if u, err := url.Parse(strings.TrimSuffix(repo, "/")); err == nil && u.Host != "" {
+		return u.Host
+	}
+	return repo
 }
 
 func sha256sum(b []byte) []byte {

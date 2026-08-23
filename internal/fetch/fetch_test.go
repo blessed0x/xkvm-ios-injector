@@ -2,6 +2,7 @@ package fetch
 
 import (
 	"compress/gzip"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -612,4 +613,34 @@ func TestLiveCanisterFetch(t *testing.T) {
 		t.Fatalf("bad deb at %s: %v (size %d)", debs[0], err, st.Size())
 	}
 	t.Logf("fetched %s (%d bytes)", debs[0], st.Size())
+}
+
+// TestDownloadPaidPackageHint pins the friendly error for repos that block
+// direct downloads of paid packages (Havoc answers 418 with exactly this
+// body shape): the error must say the package is paid and name the repo,
+// instead of surfacing a bare "HTTP 418".
+func TestDownloadPaidPackageHint(t *testing.T) {
+	var hitURL string
+	repo := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, ".deb") {
+			hitURL = r.URL.String()
+			w.WriteHeader(http.StatusTeapot)
+			_, _ = w.Write([]byte("Paid packages must be downloaded through a modern package manager (such as Sileo or Zebra)."))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer repo.Close()
+
+	r := &resolver{client: repo.Client(), cache: t.TempDir()}
+	_, err := r.download(context.Background(), "com.paid.tweak", repo.URL, "debs/com.paid.tweak.deb", "", "1.0")
+	if err == nil {
+		t.Fatal("a blocked paid download must error")
+	}
+	msg := err.Error()
+	for _, want := range []string{"paid", "Sileo", hitURL} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("error must mention %q, got: %v", want, msg)
+		}
+	}
 }
