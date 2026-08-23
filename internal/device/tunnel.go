@@ -343,14 +343,29 @@ func withTunnel(dev ios.DeviceEntry, udid string, t publishedTunnel) (ios.Device
 	return stamped, nil
 }
 
+// shouldAutoTunnel reports whether a device's reported iOS version makes
+// the CoreDevice-tunnel path worthwhile. Stock iOS 17+ gates process
+// control, install and screenshot behind that tunnel; iOS 16 and older gate
+// them behind the Developer Disk Image instead, where a spawned tunnel
+// would only burn the readiness budget on coordinates that never publish.
+// Unknown or unparseable versions still attempt — a wrong "no" is worse
+// than one wasted attempt.
+func shouldAutoTunnel(productVersion string) bool {
+	v, err := ParseVersion(productVersion)
+	if err != nil {
+		return true
+	}
+	return v[0] >= 17
+}
+
 // manualTunnelRemediation is the instruction set shown whenever automatic
 // tunnel handling is unavailable or declined.
 func manualTunnelRemediation(udid string) string {
 	return "iOS 17+ gates process-control, install and screenshot services behind a developer tunnel:\n" +
 		fmt.Sprintf("  go run %s tunnel start --userspace --udid %s\n", goIOSModuleRef, udid) +
 		"in a second terminal, then retry. --userspace needs no admin on macOS, Linux,\n" +
-		"or Windows; the same prerequisite as pymobiledevice3's Developer Disk Image\n" +
-		"mount — nothing is wrong with the device."
+		"or Windows; on iOS 16 and older the same services need the Developer Disk\n" +
+		"Image instead (mount once with Xcode). Nothing is wrong with the device."
 }
 
 // shortUDID trims the 40-hex wireless UDIDs to something printable.

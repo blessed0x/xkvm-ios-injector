@@ -296,6 +296,13 @@ func (g *GoIOS) tunnelReady(ctx context.Context, udid string) bool {
 	if g.tunnels == nil {
 		return false
 	}
+	// iOS 16 and older gate these services behind the Developer Disk Image,
+	// not a CoreDevice tunnel; a spawned tunnel there would never publish
+	// coordinates for this device and only burn the readiness budget.
+	if info, err := g.Info(ctx, udid); err == nil && !shouldAutoTunnel(info.ProductVersion) {
+		log.Infof("iOS %s exposes these services after mounting the Developer Disk Image, not via a tunnel", info.ProductVersion)
+		return false
+	}
 	err := g.tunnels.ensure(ctx, udid)
 	switch {
 	case err == nil:
