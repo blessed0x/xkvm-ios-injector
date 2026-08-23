@@ -73,7 +73,7 @@ Root: `xkvm [flags] -i <app>` (inject). Every other verb is a subcommand.
 | `xkvm fetch`-equivalent | **Folded into inject**: `-f <repo-package-id> --fetch` resolves through Canister/MobileAPT (M4) |
 | `xkvm cache [--clear]` | Show or empty the persistent fetch cache (`~/Library/Caches/xkvm/fetch`, 7-day TTL) |
 | `xkvm decrypt <app-id\|app-store-url\|bundle-id>` | Download an App Store app by Apple ID (bag → auth → buy → sinfs + metadata) |
-| `xkvm device <op>` | Control a connected iPhone/iPad via go-ios: list/pair/info/battery/apps/install/uninstall/launch/kill/syslog/restart/shutdown/watch/screenshot/devmode/omega. iOS 17+ tunnel-gated ops auto-start a userspace developer tunnel (XKVM_NO_AUTO_TUNNEL=1 declines); syslog filters with --process/--contains (`--udid`, `--json`; policy + errors in docs/device-control.md) |
+| `xkvm device <op>` | Control a connected iPhone/iPad via go-ios: list/pair/info/battery/apps/install/uninstall/launch/kill/syslog/restart/shutdown/watch/screenshot/devmode/forward/pasteboard/omega. iOS 17+ tunnel-gated ops auto-start a userspace developer tunnel (XKVM_NO_AUTO_TUNNEL=1 declines); syslog filters with --process/--contains (`--udid`, `--json`; policy + errors in docs/device-control.md) |
 
 ### Key root flags (inject)
 
@@ -268,7 +268,9 @@ must follow the strip-edit-resign discipline (extract ents → remove sig → ed
 → sign with ents). Mutual exclusivity lives in `Options.validate()`.
 
 ## 8. Current state (2026-08-23) — read this before starting work
-- 9f840e6 — dedup batch:- b5b3745 — stdlib twins removed- be304a7+e888bb5 — auto-tunnel version gate:- ab6ecff — fuzz batch: three new parser targets (FuzzDebArMember / FuzzSafeJoin / FuzzParseIndex, 30s each, ~3.8M execs clean); building the ar target exposed and fixed a live panic — readArMember allocated from the untrusted 10-char size field (negative = makeslice panic; huge = OOM steer), now bounded by maxARMemberSize with TestArMemberRejectsHostileSizes pinning it. Any crafted .deb could crash xkvm before this.
+- 9f840e6 — dedup batch:- b5b3745 — stdlib twins removed- be304a7+e888bb5 — auto-tunnel version gate:- 82934ad — device automation pair: `xkvm device forward <host> <dev>` (iproxy-style usbmuxd relay, every iOS version, no tunnel) and `xkvm device pasteboard get|set` (clipboard); Handler seam grew Forward/PasteboardGet/PasteboardSet.
+- 82934ad+docs — device automation pair: `xkvm device forward <host> <dev>` (iproxy-style usbmuxd relay, every iOS version, no tunnel) and `xkvm device pasteboard get|set` (clipboard). Handler seam grew Forward/PasteboardGet/PasteboardSet. Also restores README device rows silently dropped when an earlier multi-assert doc edit aborted mid-cell.
+- ab6ecff — fuzz batch: three new parser targets (FuzzDebArMember / FuzzSafeJoin / FuzzParseIndex, 30s each, ~3.8M execs clean); building the ar target exposed and fixed a live panic — readArMember allocated from the untrusted 10-char size field (negative = makeslice panic; huge = OOM steer), now bounded by maxARMemberSize with TestArMemberRejectsHostileSizes pinning it. Any crafted .deb could crash xkvm before this.
  shouldAutoTunnel skips the spawn on iOS 16 and older (DDI territory; unknown versions still attempt), remediation text now covers both gate generations. Process note: be304a7 briefly shipped with an unformatted test file (gofmt red, tests green), fixed in e888bb5; wake-up gating is now structurally &&-chained.
  (net.JoinHostPort, strconv.Atoi). NEXT UP (found via hidden-bug checklist): auto-tunnel should skip spawn when device reports iOS < 17 (DDI territory, not CoreDevice) — pure predicate + table test, wire into GoIOS.tunnelReady.
  internal/fsutil replaces three drifted copy helpers (streaming + perms preserved; pkgmirror no longer flattens modes); slices.Contains/builtin max/cmp.Or replace local re-implementations.

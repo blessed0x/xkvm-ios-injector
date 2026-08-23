@@ -34,6 +34,8 @@ loop: **pair → inspect → install → launch → observe**. Same transport fa
 | `screenshot [f.png]` | save a PNG of the screen (timestamped default; JPEG answers get `.jpg`) | `instruments.ScreenshotService.TakeScreenshot` |
 | `devmode` | iOS 16+ Developer Mode switch status + remediation | lockdown GetValue `com.apple.security.mac.amfi` / `DeveloperModeStatus` |
 | `omega` | revoke/cert blacklist remover (partial restore) | `mobilebackup2` device-link session, in-memory backup |
+| `forward <host> <dev>` | iproxy-style usbmuxd port relay (every iOS version) | `forward.Forward`, Ctrl-C closes |
+| `pasteboard get\|set [text]` | read or write the device clipboard | `pasteboard.New` + `SetText/GetText` |
 
 Flags: `--udid` (resolve ambiguity), `--network` (prefer network transports),
 `--timeout` (per-service dial default 15s), `--json` (machine output for

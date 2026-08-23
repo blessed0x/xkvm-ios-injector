@@ -203,7 +203,12 @@ xkvm device list                  # who's plugged in
 xkvm device pair                  # tap "Trust" on the phone, run again
 xkvm device install App-Tweaked.ipa   # stream it straight onto the device
 xkvm device launch com.example.app    # run it, print the pid
-xkvm device syslog                # parsed logs, Ctrl-C to stop
+xkvm device syslog                # parsed logs, Ctrl-C to stop (--process/--contains)
+xkvm device screenshot            # save a PNG of the screen
+xkvm device watch                 # live attach/detach events
+xkvm device devmode               # iOS 16+ Developer Mode switch status
+xkvm device forward 8080 8080     # localhost -> device port (iproxy style)
+xkvm device pasteboard get        # read the device clipboard
 xkvm device omega                 # clear revoke + cert blacklists (Omega)
 ```
 
