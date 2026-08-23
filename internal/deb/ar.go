@@ -10,6 +10,10 @@ import (
 
 const arMagic = "!<arch>\n"
 
+// maxARMemberSize bounds the per-member allocation a hostile header can
+// steer (4 GiB — far above any real data.tar.*, far below OOM territory).
+const maxARMemberSize = 1 << 32
+
 // arMember is one member of an ar archive. The member data is fully
 // materialized in memory (deb payloads are small), and any trailing padding
 // byte is consumed before the next member is read.
@@ -33,6 +37,12 @@ func readArMember(r io.Reader) (arMember, error) {
 	size, err := strconv.ParseInt(strings.TrimSpace(string(hdr[48:58])), 10, 64)
 	if err != nil {
 		return arMember{}, fmt.Errorf("invalid ar member size for %q: %w", name, err)
+	}
+	// The size comes from an untrusted 10-character field: reject negatives
+	// (make would panic) and absurd claims (a 60-byte header must not steer
+	// a multi-gigabyte allocation) before any memory is touched.
+	if size < 0 || size > maxARMemberSize {
+		return arMember{}, fmt.Errorf("ar member %q declares an impossible size (%d)", name, size)
 	}
 
 	data := make([]byte, size)
