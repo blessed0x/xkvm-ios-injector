@@ -764,15 +764,30 @@ func (g *GoIOS) wrap(kind ErrorKind, op, remediation string, err error) error {
 	return &Error{Kind: kind, Op: op, Remediation: remediation, Err: err}
 }
 
-// tunnelGate reports whether err is the iOS 17+ service gate: instruments
-// and the install conduit are only offered once a developer tunnel (or
-// Developer Disk Image) is active on the host.
+// tunnelGateSigs are case-insensitive substrings that mark an error as the
+// iOS 17+ service gate. They cover both phrasings seen in the wild: our own
+// remediation text and go-ios's verbatim connect errors.
+var tunnelGateSigs = []string{
+	"needs an active tunnel",
+	"invalidservice",                      // go-ios lockdown/start-service rejections
+	"invalid service",                     // spaced variant seen in wrapped errors
+	"developer image",                     // pre-iOS-17 DDI wording
+	"failed connecting to service",        // instruments dials
+	"have you mounted",                    // classic imagemounter prompt
+	"missing tunnel address and rsd port", // go-ios ConnectToShimService/TunnelIface verbatim
+}
+
+// tunnelGate reports whether err is the iOS 17+ service gate: instruments,
+// the install conduit and screenshots are only offered once a developer
+// tunnel (or Developer Disk Image) is active on the host. Matching is
+// case-insensitive because upstream error casing has drifted across
+// go-ios releases.
 func tunnelGate(err error) bool {
 	if err == nil {
 		return false
 	}
-	msg := err.Error()
-	for _, sig := range []string{"needs an active tunnel", "InvalidService", "Developer Image", "Failed connecting to service", "Have you mounted"} {
+	msg := strings.ToLower(err.Error())
+	for _, sig := range tunnelGateSigs {
 		if strings.Contains(msg, sig) {
 			return true
 		}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -262,6 +263,31 @@ func TestShouldAutoTunnelVersionGate(t *testing.T) {
 	for _, tc := range cases {
 		if got := shouldAutoTunnel(tc.version); got != tc.want {
 			t.Errorf("shouldAutoTunnel(%q) = %v, want %v", tc.version, got, tc.want)
+		}
+	}
+}
+
+func TestTunnelGateClassification(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+		{"plain", errors.New("something else broke"), false},
+		{"active tunnel", errors.New("Cannot connect to %s, missing tunnel address and RSD port. To start the tunnel, run `ios tunnel start`"), true},
+		{"needs active tunnel phrase", errors.New("this service needs an active tunnel"), true},
+		{"invalid service camel", errors.New("InvalidService: not available"), true},
+		{"invalid service lower (upstream casing drift)", errors.New("invalid service"), true},
+		{"developer image", errors.New("Have you mounted the Developer Image?"), true},
+		{"developer image words", errors.New("device returned Developer Image required"), true},
+		{"failed connecting", fmt.Errorf("connecting to process control: %w", errors.New("Failed connecting to service com.apple.instruments.server.services.processcontrol")), true},
+		{"have you mounted alone", errors.New("HAVE YOU MOUNTED a disk image?"), true},
+		{"wrapped deep", fmt.Errorf("install: %w", fmt.Errorf("zipconduit: %w", errors.New("InvalidService"))), true},
+	}
+	for _, tc := range cases {
+		if got := tunnelGate(tc.err); got != tc.want {
+			t.Errorf("tunnelGate(%v) = %v, want %v", tc.err, got, tc.want)
 		}
 	}
 }
