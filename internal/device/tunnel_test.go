@@ -246,7 +246,6 @@ func TestManualRemediationNamesTheCommand(t *testing.T) {
 	}
 }
 
-
 func TestShouldAutoTunnelVersionGate(t *testing.T) {
 	cases := []struct {
 		version string
@@ -254,10 +253,10 @@ func TestShouldAutoTunnelVersionGate(t *testing.T) {
 	}{
 		{"17.0", true},
 		{"17.5.1", true},
-		{"26.1", true},  // live-verified line: tunnel is the only path
+		{"26.1", true},    // live-verified line: tunnel is the only path
 		{"16.7.1", false}, // DDI territory: a spawned tunnel never publishes
 		{"15.0", false},
-		{"", true},        // unknown device answer: attempt beats a wrong "no"
+		{"", true}, // unknown device answer: attempt beats a wrong "no"
 		{"not a version", true},
 	}
 	for _, tc := range cases {
