@@ -268,23 +268,24 @@ must follow the strip-edit-resign discipline (extract ents → remove sig → ed
 → sign with ents). Mutual exclusivity lives in `Options.validate()`.
 
 ## 8. Current state (2026-08-23) — read this before starting work
-- 9f840e6 — dedup batch:- b5b3745 — stdlib twins removed- REPO SPLIT (2026-08-23, post-ride): the device subsystem now lives standalone at github.com/gwnodex-bit/idev (private; module github.com/gwnodex-bit/idev) — device/ library + cmd/idev CLI + internal/log ported verbatim with import rewrites, full test suite green, own Makefile/CI. xKVM's internal/device copy remains authoritative-for-xkvm until PHASE 2: flip xkvm to `require github.com/gwnodex-bit/idev` + delete internal/device + repoint cli/tui imports. Do NOT edit both copies for new features — land in idev first.
-- be304a7+e888bb5 — auto-tunnel version gate:- 82934ad — device automation pair: `xkvm device forward <host> <dev>` (iproxy-style usbmuxd relay, every iOS version, no tunnel) and `xkvm device pasteboard get|set` (clipboard); Handler seam grew Forward/PasteboardGet/PasteboardSet.
-- 6965577 — fuzz batch: FuzzParseNoPanicNoEscape smashes the .cyan parser (shared-file hostile input; zip bytes -> Parse+Validate) asserting no panic and no outDir escape. 30s / 103k execs clean — the inject/ zip-slip guard holds.
-- 82934ad+docs — device automation pair: `xkvm device forward <host> <dev>` (iproxy-style usbmuxd relay, every iOS version, no tunnel) and `xkvm device pasteboard get|set` (clipboard). Handler seam grew Forward/PasteboardGet/PasteboardSet. Also restores README device rows silently dropped when an earlier multi-assert doc edit aborted mid-cell.
-- ab6ecff — fuzz batch: three new parser targets (FuzzDebArMember / FuzzSafeJoin / FuzzParseIndex, 30s each, ~3.8M execs clean); building the ar target exposed and fixed a live panic — readArMember allocated from the untrusted 10-char size field (negative = makeslice panic; huge = OOM steer), now bounded by maxARMemberSize with TestArMemberRejectsHostileSizes pinning it. Any crafted .deb could crash xkvm before this.
- shouldAutoTunnel skips the spawn on iOS 16 and older (DDI territory; unknown versions still attempt), remediation text now covers both gate generations. Process note: be304a7 briefly shipped with an unformatted test file (gofmt red, tests green), fixed in e888bb5; wake-up gating is now structurally &&-chained.
- (net.JoinHostPort, strconv.Atoi). NEXT UP (found via hidden-bug checklist): auto-tunnel should skip spawn when device reports iOS < 17 (DDI territory, not CoreDevice) — pure predicate + table test, wire into GoIOS.tunnelReady.
- internal/fsutil replaces three drifted copy helpers (streaming + perms preserved; pkgmirror no longer flattens modes); slices.Contains/builtin max/cmp.Or replace local re-implementations.
 
-**HEAD is past `5e9f4d1`; read `git log` for the live list.** Batches since
-then, newest first:
+**HEAD is past `5e9f4d1`; read `git log` for the live list.**
 
-- Device-control parity batch (this one): auto-managed iOS 17+ developer
-  tunnels (discover -> spawn -> retry; `internal/device/tunnel.go`,
-  XKVM_NO_AUTO_TUNNEL kill-switch), os_trace syslog fallback over the tunnel,
-  `device watch` / `screenshot` / `devmode`, syslog `--process/--contains`
-  filters, entitlements plist pre-validation in Options.validate.
+- **REPO SPLIT (2026-08-23, post-ride): the device subsystem now lives
+  standalone at `github.com/gwnodex-bit/idev`** (private; checkout:
+  `/Users/blessed/idev`) — `device/` library + `cmd/idev` CLI +
+  `internal/log` ported verbatim with import rewrites, full test suite
+  green, own Makefile/CI. xKVM's `internal/device` copy remains
+  authoritative-for-xkvm until PHASE 2: flip xkvm to
+  `require github.com/gwnodex-bit/idev` + delete `internal/device` +
+  repoint cli/tui imports. **Do NOT edit both copies for new features —
+  land in idev first.**
+- Device-control parity batch: auto-managed iOS 17+ developer tunnels
+  (discover -> spawn -> retry; `internal/device/tunnel.go`,
+  XKVM_NO_AUTO_TUNNEL kill-switch), os_trace syslog fallback over the
+  tunnel, `device watch` / `screenshot` / `devmode` /
+  `forward` / `pasteboard`, syslog `--process/--contains` filters,
+  entitlements plist pre-validation in Options.validate.
 - Agent-context docs (fe98d3a + f74a18a): AGENTS.md expanded, CLAUDE.md,
   docs/PRD.md, docs/TTD.md, docs/ARCHITECTURE_OVERVIEW.md added then made
   LOCAL-ONLY (untracked + gitignored). A fresh clone will not have them;
@@ -316,6 +317,37 @@ then, newest first:
   no Apple ID exists on this dev machine. Apple's auth is unstable upstream
   too. If live auth fails, the likely first place to look is cookies from
   intermediate redirect hops (Go captures only the final response's cookies).
+
+Recent heartbeat batches (each gated by `make qa`, pushed green), newest
+first:
+
+- `0a4a3ef` — handoff records the idev repo split and the phase-2 plan.
+- `f79992e`/`96363a0`/`e496721`/`d13f8c1`/`a71247f` — handoff bookkeeping
+  lines accompanying the batches below.
+- `6965577` — fuzz batch: FuzzParseNoPanicNoEscape smashes the .cyan parser
+  (shared-file hostile input; zip bytes -> Parse+Validate) asserting no panic
+  and no outDir escape. 30s / 103k execs clean — the inject/ zip-slip guard
+  holds.
+- `62adc93`/`82934ad` — device automation pair: `xkvm device forward <host>
+  <dev>` (iproxy-style usbmuxd relay, every iOS version, no tunnel) and
+  `xkvm device pasteboard get|set` (clipboard); Handler seam grew
+  Forward/PasteboardGet/PasteboardSet. Also restores README device rows
+  silently dropped when an earlier multi-assert doc edit aborted mid-cell.
+- `ab6ecff` — fuzz batch: three parser targets (FuzzDebArMember /
+  FuzzSafeJoin / FuzzParseIndex, 30s each, ~3.8M execs clean); building the
+  ar target exposed and fixed a live panic — readArMember allocated from the
+  untrusted 10-char size field (negative = makeslice panic; huge = OOM
+  steer), now bounded by maxARMemberSize with TestArMemberRejectsHostileSizes
+  pinning it. Any crafted .deb could crash xkvm before this.
+- `be304a7`+`e888bb5` — auto-tunnel version gate: shouldAutoTunnel skips the
+  spawn on iOS 16 and older (DDI territory; unknown versions still attempt),
+  remediation text covers both gate generations. Process note: be304a7
+  briefly shipped with an unformatted test file (gofmt red, tests green),
+  fixed in e888bb5; wake-up gating is now structurally &&-chained.
+- `b5b3745` — stdlib twins removed (net.JoinHostPort, strconv.Atoi).
+- `9f840e6` — dedup batch: internal/fsutil replaces three drifted copy
+  helpers (streaming + perms preserved; pkgmirror no longer flattens modes);
+  slices.Contains/builtin max/cmp.Or replace local re-implementations.
 
 ## 9. Build / test / QA
 
