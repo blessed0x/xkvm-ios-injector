@@ -268,6 +268,7 @@ must follow the strip-edit-resign discipline (extract ents → remove sig → ed
 → sign with ents). Mutual exclusivity lives in `Options.validate()`.
 
 ## 8. Current state (2026-08-23) — read this before starting work
+- 9f840e6 — dedup batch: internal/fsutil replaces three drifted copy helpers (streaming + perms preserved; pkgmirror no longer flattens modes); slices.Contains/builtin max/cmp.Or replace local re-implementations.
 
 **HEAD is past `5e9f4d1`; read `git log` for the live list.** Batches since
 then, newest first:
