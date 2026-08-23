@@ -280,7 +280,7 @@ func (g *GoIOS) Install(ctx context.Context, udid, path string) error {
 				return nil
 			}
 		}
-		return g.wrap(KindNotFound, "install", tunnelRemediation, err)
+		return g.wrap(KindNotFound, "install", manualTunnelRemediation(udid), err)
 	}
 	if err != nil {
 		return g.wrap(KindInternal, "install", "check disk space on the device and try again", err)
@@ -375,7 +375,7 @@ func (g *GoIOS) Launch(ctx context.Context, udid, bundleID string, env map[strin
 				return pid, nil
 			}
 		}
-		return 0, g.wrap(KindNotFound, "launch", tunnelRemediation, err)
+		return 0, g.wrap(KindNotFound, "launch", manualTunnelRemediation(udid), err)
 	}
 	if err != nil {
 		return 0, g.wrap(KindNotFound, "launch", "is the bundle id installed? see \"xkvm device apps\"", err)
@@ -406,7 +406,7 @@ func (g *GoIOS) Kill(ctx context.Context, udid string, pid uint64) error {
 				return nil
 			}
 		}
-		return g.wrap(KindNotFound, "kill", tunnelRemediation, err)
+		return g.wrap(KindNotFound, "kill", manualTunnelRemediation(udid), err)
 	}
 	if err != nil {
 		return g.wrap(KindNotFound, "kill", "the process may have exited already", err)
@@ -566,7 +566,7 @@ func (g *GoIOS) Screenshot(ctx context.Context, udid string) ([]byte, error) {
 				return shot, nil
 			}
 		}
-		return nil, g.wrap(KindNotFound, "screenshot", tunnelRemediation, err)
+		return nil, g.wrap(KindNotFound, "screenshot", manualTunnelRemediation(udid), err)
 	}
 	if err != nil {
 		return nil, g.wrap(KindConnection, "screenshot", "unlock the device and try again", err)
@@ -705,9 +705,3 @@ func tunnelGate(err error) bool {
 	}
 	return false
 }
-
-const tunnelRemediation = "iOS 17+ gated the process-control and install services behind a developer tunnel:\n" +
-	"  go run github.com/danielpaulus/go-ios@v1.3.2 tunnel start --userspace --udid <UDID>\n" +
-	"in a second terminal, then retry. --userspace needs no admin on macOS, Linux,\n" +
-	"or Windows; the same prerequisite as pymobiledevice3's Developer Disk Image\n" +
-	"mount — nothing is wrong with the device."

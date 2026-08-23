@@ -48,7 +48,7 @@ func (g *GoIOS) OmegaRestore(ctx context.Context, udid string, progress func(flo
 	conn, err := ios.ConnectToService(dev, mb2Service)
 	if err != nil {
 		if tunnelGate(err) {
-			return g.wrap(KindNotFound, "omega", tunnelRemediation, err)
+			return g.wrap(KindNotFound, "omega", manualTunnelRemediation(udid), err)
 		}
 		return g.wrap(KindConnection, "omega", "service refused — device locked? unlock and retry", err)
 	}
