@@ -1,6 +1,7 @@
 package fetch
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -202,7 +203,7 @@ func (r *resolver) locate(ctx context.Context, id string) (repo, file, depends, 
 			if e.Filename != "" {
 				return uri, e.Filename, e.Depends, e.SHA256, e.Version, nil
 			}
-			return uri, pkgFile, e.Depends, firstNonEmpty(e.SHA256, pkgSHA), firstNonEmpty(e.Version, pkgVer), nil
+			return uri, pkgFile, e.Depends, cmp.Or(e.SHA256, pkgSHA), cmp.Or(e.Version, pkgVer), nil
 		}
 	}
 	return uri, pkgFile, "", pkgSHA, pkgVer, nil
@@ -269,13 +270,6 @@ func (r *resolver) download(ctx context.Context, id, repo, file, sha, version st
 func sha256sum(b []byte) []byte {
 	sum := sha256.Sum256(b)
 	return sum[:]
-}
-
-func firstNonEmpty(a, b string) string {
-	if a != "" {
-		return a
-	}
-	return b
 }
 
 // isDefaultCacheDir reports whether dir is the standard persistent cache

@@ -8,6 +8,7 @@ import (
 
 	"github.com/xscope0/xkvm-ios-injector/internal/artifact"
 	"github.com/xscope0/xkvm-ios-injector/internal/deb"
+	"github.com/xscope0/xkvm-ios-injector/internal/fsutil"
 	"github.com/xscope0/xkvm-ios-injector/internal/log"
 	"github.com/xscope0/xkvm-ios-injector/internal/plist"
 	"github.com/xscope0/xkvm-ios-injector/internal/rootless"
@@ -104,7 +105,7 @@ func Debify(o DebifyOptions) error {
 		if err := os.MkdirAll(dlDir, 0o755); err != nil {
 			return err
 		}
-		if err := copyFile(o.Input, filepath.Join(dlDir, pkg+".dylib")); err != nil {
+		if err := fsutil.CopyFile(o.Input, filepath.Join(dlDir, pkg+".dylib")); err != nil {
 			return err
 		}
 		log.Infof("payload: %s", filepath.Join("Library", "MobileSubstrate", "DynamicLibraries", pkg+".dylib"))
@@ -116,7 +117,7 @@ func Debify(o DebifyOptions) error {
 		if err := os.MkdirAll(dlDir, 0o755); err != nil {
 			return err
 		}
-		if err := copyFile(o.Filter, filepath.Join(dlDir, pkg+".plist")); err != nil {
+		if err := fsutil.CopyFile(o.Filter, filepath.Join(dlDir, pkg+".plist")); err != nil {
 			return err
 		}
 	} else if len(o.BundleIDs) > 0 {
@@ -301,21 +302,6 @@ func exportArtifacts(appDir, outDir, source string, arts []string) error {
 }
 
 // copyFile copies a single file, preserving mode.
-func copyFile(src, dst string) error {
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		return err
-	}
-	data, err := os.ReadFile(src)
-	if err != nil {
-		return err
-	}
-	st, err := os.Stat(src)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(dst, data, st.Mode().Perm())
-}
-
 // sanitizePkgName lowercases and reduces display names to dpkg-legal package
 // characters ([a-z0-9+.-]); everything else is dropped.
 func sanitizePkgName(name string) string {

@@ -332,13 +332,6 @@ func panelRow(u *UI, color, txt string, width int) string {
 	return "   │ " + u.paint(color, txt) + strings.Repeat(" ", width-len(txt)) + " │\n"
 }
 
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
 // titleText is title() without the trailing newline handling differences —
 // used by the raw renderer so line counting stays exact.
 func (u *UI) titleText(t string) string {

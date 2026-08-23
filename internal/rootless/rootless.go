@@ -39,6 +39,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/xscope0/xkvm-ios-injector/internal/deb"
@@ -160,7 +161,7 @@ func ShouldConvert(s string) bool {
 		return false
 	}
 	first := firstPathComponent(s)
-	if !contains(bootstrapRoots, first) {
+	if !slices.Contains(bootstrapRoots, first) {
 		return false
 	}
 	for sc := range specialCases {
@@ -585,15 +586,6 @@ func convertMachOs(payload string, thin, tweakinject bool) (int, error) {
 		return nil
 	})
 	return converted, err
-}
-
-func contains(list []string, s string) bool {
-	for _, x := range list {
-		if x == s {
-			return true
-		}
-	}
-	return false
 }
 
 // fixedPathRe matches absolute paths rooted at the classic jailbreak

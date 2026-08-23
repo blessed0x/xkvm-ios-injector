@@ -16,7 +16,6 @@ package inject
 import (
 	"cmp"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -24,6 +23,7 @@ import (
 
 	"github.com/xscope0/xkvm-ios-injector/internal/deb"
 	"github.com/xscope0/xkvm-ios-injector/internal/extras"
+	"github.com/xscope0/xkvm-ios-injector/internal/fsutil"
 	"github.com/xscope0/xkvm-ios-injector/internal/log"
 	"github.com/xscope0/xkvm-ios-injector/internal/macho"
 )
@@ -277,7 +277,7 @@ func (in *Injector) injectAppex(path string) error {
 	if err := os.RemoveAll(dest); err != nil {
 		return err
 	}
-	if err := copyTree(path, dest); err != nil {
+	if err := fsutil.CopyTree(path, dest); err != nil {
 		return err
 	}
 	log.Infof("injected %s (appex)", bn)
@@ -288,7 +288,7 @@ func (in *Injector) injectDylib(path string, needed map[string]bool, injectedNam
 	bn := filepath.Base(path)
 	// Work on a staging copy so fixes never touch the user's original.
 	stage := filepath.Join(in.tmpdir, bn)
-	if err := copyFile(path, stage); err != nil {
+	if err := fsutil.CopyFile(path, stage); err != nil {
 		return err
 	}
 	e := macho.Bin{Path: stage}
@@ -322,7 +322,7 @@ func (in *Injector) injectDylib(path string, needed map[string]bool, injectedNam
 func (in *Injector) injectDylibRoot(path string, needed map[string]bool, injectedNames []string) error {
 	bn := filepath.Base(path)
 	stage := filepath.Join(in.tmpdir, bn)
-	if err := copyFile(path, stage); err != nil {
+	if err := fsutil.CopyFile(path, stage); err != nil {
 		return err
 	}
 	e := macho.Bin{Path: stage}
@@ -357,7 +357,7 @@ func (in *Injector) injectFramework(path string) error {
 	if err := os.RemoveAll(dest); err != nil {
 		return err
 	}
-	if err := copyTree(path, dest); err != nil {
+	if err := fsutil.CopyTree(path, dest); err != nil {
 		return err
 	}
 	log.Infof("injected %s (framework)", bn)
@@ -374,9 +374,9 @@ func (in *Injector) copyToRoot(path string) error {
 	if st, statErr := os.Stat(path); statErr != nil {
 		return statErr
 	} else if st.IsDir() {
-		err = copyTree(path, dest)
+		err = fsutil.CopyTree(path, dest)
 	} else {
-		err = copyFile(path, dest)
+		err = fsutil.CopyFile(path, dest)
 	}
 	if err != nil {
 		return err
@@ -530,43 +530,4 @@ func basenames(paths []string) []string {
 		out = append(out, filepath.Base(p))
 	}
 	return out
-}
-
-func copyFile(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	st, err := in.Stat()
-	if err != nil {
-		return err
-	}
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, st.Mode().Perm())
-	if err != nil {
-		return err
-	}
-	_, copyErr := io.Copy(out, in)
-	closeErr := out.Close()
-	if copyErr != nil {
-		return copyErr
-	}
-	return closeErr
-}
-
-func copyTree(src, dst string) error {
-	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(src, path)
-		if err != nil {
-			return err
-		}
-		target := filepath.Join(dst, rel)
-		if info.IsDir() {
-			return os.MkdirAll(target, info.Mode().Perm())
-		}
-		return copyFile(path, target)
-	})
 }

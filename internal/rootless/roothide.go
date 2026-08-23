@@ -61,6 +61,7 @@ import (
 	"strings"
 
 	"github.com/xscope0/xkvm-ios-injector/internal/deb"
+	"github.com/xscope0/xkvm-ios-injector/internal/fsutil"
 	"github.com/xscope0/xkvm-ios-injector/internal/log"
 	"github.com/xscope0/xkvm-ios-injector/internal/macho"
 	"github.com/xscope0/xkvm-ios-injector/internal/plist"
@@ -416,7 +417,7 @@ func makePkgMirror(dir string) error {
 		if e.Name() == "var" {
 			continue // the mirror destination itself
 		}
-		if err := copyTree(filepath.Join(dir, e.Name()), filepath.Join(mirror, e.Name())); err != nil {
+		if err := fsutil.CopyTree(filepath.Join(dir, e.Name()), filepath.Join(mirror, e.Name())); err != nil {
 			return err
 		}
 	}
@@ -451,24 +452,6 @@ func makePkgMirror(dir string) error {
 	}
 	log.Infof("mirrored package to var/mobile/Library/pkgmirror (DEBIAN.%s)", pkg)
 	return nil
-}
-
-func copyTree(src, dst string) error {
-	return filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, _ := filepath.Rel(src, path)
-		target := filepath.Join(dst, rel)
-		if d.IsDir() {
-			return os.MkdirAll(target, 0o755)
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		return os.WriteFile(target, data, 0o644)
-	})
 }
 
 // patchPayloadForRoothide walks the package and applies the Mach-O /var/jb →
