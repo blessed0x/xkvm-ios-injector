@@ -211,8 +211,11 @@ func (in *Injector) Inject(tweaks []string) error {
 		if err := os.MkdirAll(fw, 0o755); err != nil {
 			return err
 		}
-		// Some apps lack the rpath; the error is fine if it already exists.
-		_ = in.MainBin.AddRpath("@executable_path/Frameworks")
+		// A duplicate rpath is not an error: nativeAddRpath rewrites the
+		// original bytes and returns nil for it.
+		if err := in.MainBin.AddRpath("@executable_path/Frameworks"); err != nil {
+			return fmt.Errorf("adding Frameworks rpath to main executable: %w", err)
+		}
 	}
 
 	needed := map[string]bool{}

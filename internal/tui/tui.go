@@ -1312,7 +1312,9 @@ func (u *UI) flowDecrypt() {
 			prefs.AskMode = decrypt.AskModeNever
 		}
 		prefs.OutputDir = outDir
-		_ = u.SaveDecryptPrefs(prefs)
+		if err := u.SaveDecryptPrefs(prefs); err != nil {
+			log.Warnf("saving decrypt prefs: %v", err)
+		}
 	}
 
 	var path string
