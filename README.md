@@ -228,11 +228,13 @@ same control surface is in the TUI under the `device` category — pair,
 info, battery, apps (launch/uninstall the picked app), install, launch
 by bundle id, kill by pid, and a live syslog screen.
 
-Note for iOS 17+: `launch`/`kill`/`install`/`omega` need a developer tunnel the
-same way pymobiledevice3 needs a mounted Developer Disk Image; xkvm tells
-you the exact command when it hits that gate. `pair`/`info`/`battery`/
-`apps` work without it, and one physical phone showing up on both USB and
-WiFi counts as one device.
+Note for iOS 17+: `launch`/`kill`/`install`/`screenshot` need a developer
+tunnel the same way pymobiledevice3 needs a mounted Developer Disk Image — so
+xkvm starts one for you in the background when an operation hits that gate,
+then retries over it (`XKVM_NO_AUTO_TUNNEL=1` prints the manual command
+instead). `syslog` streams os_trace logs over that same tunnel on stock iOS
+17+. `pair`/`info`/`battery`/`apps` work without any tunnel, and one physical
+phone showing up on both USB and WiFi counts as one device.
 
 ## Common options
 

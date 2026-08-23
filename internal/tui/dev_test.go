@@ -3,6 +3,7 @@ package tui
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -57,10 +58,19 @@ func (s *stubDev) Kill(ctx context.Context, udid string, pid uint64) error {
 	s.kills = append(s.kills, pid)
 	return nil
 }
-func (s *stubDev) Syslog(ctx context.Context, udid string, w io.Writer) error {
+func (s *stubDev) Syslog(ctx context.Context, udid string, w io.Writer, filter device.LogFilter) error {
 	io.WriteString(w, s.syslogLines)
 	<-ctx.Done()
 	return nil
+}
+func (s *stubDev) Screenshot(ctx context.Context, udid string) ([]byte, error) {
+	return nil, errors.New("not implemented in stub")
+}
+func (s *stubDev) Watch(ctx context.Context, fn func(device.WatchEvent) error) error {
+	return ctx.Err()
+}
+func (s *stubDev) DevModeStatus(ctx context.Context, udid string) (device.DevMode, error) {
+	return device.DevMode{Reported: true, Enabled: true}, nil
 }
 func (s *stubDev) Restart(ctx context.Context, udid string) error { return nil }
 func (s *stubDev) OmegaRestore(ctx context.Context, udid string, progress func(float64)) error {

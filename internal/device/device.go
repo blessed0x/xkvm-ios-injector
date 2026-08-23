@@ -64,6 +64,30 @@ type Supervised struct {
 	Password string
 }
 
+// LogFilter narrows what `device syslog` streams. Zero values mean
+// everything. Process matches case-insensitively as a substring of the
+// emitting process name; Contains matches the message body (and, for raw
+// unparseable lines, the whole line).
+type LogFilter struct {
+	Process  string
+	Contains string
+}
+
+// WatchEvent is one usbmuxd attach/detach notification.
+type WatchEvent struct {
+	UDID     string
+	Attached bool
+}
+
+// DevMode is the iOS 16+ Developer Mode state as lockdown reports it.
+type DevMode struct {
+	// Enabled is the amfi DeveloperModeStatus value.
+	Enabled bool
+	// Reported is false when the device did not answer the amfi domain at
+	// all — iOS 15 and older have no Developer Mode gate (always allowed).
+	Reported bool
+}
+
 // Options configure a Handler. Zero values are usable; Timeout defaults to
 // 15s per operation where the underlying transport supports deadlines.
 type Options struct {
@@ -145,7 +169,15 @@ type Handler interface {
 	Uninstall(ctx context.Context, udid, bundleID string) error
 	Launch(ctx context.Context, udid, bundleID string, env map[string]string, args []string) (uint64, error)
 	Kill(ctx context.Context, udid string, pid uint64) error
-	Syslog(ctx context.Context, udid string, w io.Writer) error
+	Syslog(ctx context.Context, udid string, w io.Writer, filter LogFilter) error
+	// Screenshot captures the device screen and returns the image bytes
+	// (PNG on stock iOS; some instruments builds answer JPEG).
+	Screenshot(ctx context.Context, udid string) ([]byte, error)
+	// Watch streams usbmuxd attach/detach events until ctx is cancelled or
+	// the callback returns an error.
+	Watch(ctx context.Context, fn func(WatchEvent) error) error
+	// DevModeStatus reads the iOS 16+ Developer Mode switch over lockdown.
+	DevModeStatus(ctx context.Context, udid string) (DevMode, error)
 	OmegaRestore(ctx context.Context, udid string, progress func(float64)) error
 	Restart(ctx context.Context, udid string) error
 	Shutdown(ctx context.Context, udid string) error

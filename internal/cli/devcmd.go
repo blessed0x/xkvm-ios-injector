@@ -2,10 +2,13 @@ package cli
 
 import (
 	"bufio"
+	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
 	"time"
@@ -31,6 +34,7 @@ func newDeviceCmd() *cobra.Command {
 		timeout                        time.Duration
 		showJSON, systemApps, forceYes bool
 		envs, appArgs                  []string
+		logProcess, logContains        string
 	)
 	cmd := &cobra.Command{
 		Use:   "device",
@@ -53,9 +57,17 @@ Subcommands:
   xkvm device uninstall <bundle>  remove an installed app
   xkvm device launch <bundle>     launch an app, print its pid
   xkvm device kill <pid>          terminate a running process
-  xkvm device syslog              stream parsed device logs (Ctrl-C to stop)
-  xkvm device restart             reboot the device
-  xkvm device shutdown            power the device off
+  xkvm device syslog [--process p] [--contains s]
+                                  stream parsed device logs (Ctrl-C to stop);
+                                  on iOS 17+ xkvm streams os_trace over a
+                                  developer tunnel it starts for you
+  xkvm device watch               live attach/detach events (Ctrl-C stops)
+  xkvm device screenshot [f.png]  save a PNG of the screen (default: timestamped)
+  xkvm device devmode             iOS 16+ Developer Mode switch status
+
+iOS 17+ note: launch/kill/install/screenshot need a developer tunnel.
+xkvm starts one for you automatically when an operation needs it; set
+XKVM_NO_AUTO_TUNNEL=1 to always print the manual command instead.
 
 When more than one device is connected, pick one with --udid.`,
 		Args: cobra.NoArgs,
@@ -305,8 +317,10 @@ When more than one device is connected, pick one with --udid.`,
 			if err != nil {
 				return err
 			}
-			return dh.Syslog(cmd.Context(), target.UDID, cmd.OutOrStdout())
+			return dh.Syslog(cmd.Context(), target.UDID, cmd.OutOrStdout(), device.LogFilter{Process: logProcess, Contains: logContains})
 		}}
+	syslogCmd.Flags().StringVar(&logProcess, "process", "", "only lines whose process name contains this text (case-insensitive)")
+	syslogCmd.Flags().StringVar(&logContains, "contains", "", "only lines whose message contains this text")
 
 	restart := &cobra.Command{Use: "restart", Short: "reboot the device",
 		Args: cobra.NoArgs,
@@ -442,8 +456,98 @@ make a backup. The phone reboots by itself when the restore finishes.`,
 	omega.Flags().StringVar(&iosVer, "ios", "", "iOS version override (X.Y) — normally detected from the device")
 	omega.Flags().BoolVar(&omegaForce, "yes", false, "skip the CONTINUE confirmation (scripts)")
 
-	cmd.AddCommand(list, doctor, pair, info, battery, apps, install, uninstall, launch, kill, syslogCmd, restart, shutdown, omega)
+	// watch: usbmuxd attach/detach events until Ctrl-C.
+	watch := &cobra.Command{Use: "watch", Short: "live attach/detach events as devices plug in and out",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			dh := h()
+			defer dh.Close()
+			ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			defer cancel()
+			return dh.Watch(ctx, func(ev device.WatchEvent) error {
+				if ev.Attached {
+					fmt.Fprintf(cmd.OutOrStdout(), "attached %s\n", ev.UDID)
+				} else {
+					fmt.Fprintf(cmd.OutOrStdout(), "detached %s\n", ev.UDID)
+				}
+				return nil
+			})
+		}}
+
+	// screenshot: capture the device screen.
+	screenshot := &cobra.Command{Use: "screenshot [path]", Short: "save a PNG of the device screen",
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			dh := h()
+			defer dh.Close()
+			target, err := resolveUDID(cmd, dh, udid)
+			if err != nil {
+				return err
+			}
+			out := ""
+			if len(args) == 1 {
+				out = args[0]
+			}
+			path, err := deviceScreenshot(cmd.Context(), dh, target.UDID, out)
+			if err != nil {
+				return err
+			}
+			log.Infof("saved %s", path)
+			return nil
+		}}
+
+	// devmode: iOS 16+ Developer Mode status.
+	devmode := &cobra.Command{Use: "devmode", Short: "show the iOS 16+ Developer Mode switch (launch/install needs it on)",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			dh := h()
+			defer dh.Close()
+			target, err := resolveUDID(cmd, dh, udid)
+			if err != nil {
+				return err
+			}
+			dm, err := dh.DevModeStatus(cmd.Context(), target.UDID)
+			if err != nil {
+				return err
+			}
+			return printJSONOr(cmd, showJSON, dm, func() error {
+				switch {
+				case !dm.Reported:
+					fmt.Fprintln(cmd.OutOrStdout(), "developer mode: not gated on this iOS (iOS 15 and older always allow it)")
+				case dm.Enabled:
+					fmt.Fprintln(cmd.OutOrStdout(), "developer mode: ON")
+				default:
+					fmt.Fprintln(cmd.OutOrStdout(), "developer mode: OFF")
+					fmt.Fprintln(cmd.OutOrStdout(), "  launch/install of your builds needs it: Settings > Privacy & Security >")
+					fmt.Fprintln(cmd.OutOrStdout(), "  Developer Mode > turn on, then reboot when the phone asks.")
+				}
+				return nil
+			})
+		}}
+
+	cmd.AddCommand(list, doctor, pair, info, battery, apps, install, uninstall, launch, kill, syslogCmd, restart, shutdown, omega, watch, screenshot, devmode)
 	return cmd
+}
+
+// deviceScreenshot captures the screen and writes it to path — deriving a
+// timestamped default and the right extension from the image's magic bytes
+// (instruments answers PNG on stock iOS; some builds answer JPEG).
+func deviceScreenshot(ctx context.Context, dh device.Handler, udid, path string) (string, error) {
+	data, err := dh.Screenshot(ctx, udid)
+	if err != nil {
+		return "", err
+	}
+	if path == "" {
+		ext := ".png"
+		if !bytes.HasPrefix(data, []byte{0x89, 'P', 'N', 'G'}) && bytes.HasPrefix(data, []byte{0xFF, 0xD8}) {
+			ext = ".jpg"
+		}
+		path = fmt.Sprintf("screenshot-%s%s", time.Now().Format("20060102-150405"), ext)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return "", fmt.Errorf("writing %s: %w", path, err)
+	}
+	return path, nil
 }
 
 // resolveUDID runs the no-guess device policy (explicit UDID wins, else

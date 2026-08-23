@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -13,14 +15,19 @@ import (
 	"time"
 
 	"github.com/xscope0/xkvm-ios-injector/internal/device"
+	"github.com/xscope0/xkvm-ios-injector/internal/log"
 )
 
 type stubDevHandler struct {
-	devs      []device.Dev
-	info      device.Info
-	apps      []device.App
-	launched  []string
-	omegaRuns int
+	devs         []device.Dev
+	info         device.Info
+	apps         []device.App
+	launched     []string
+	omegaRuns    int
+	syslogFilter device.LogFilter
+	shot         []byte
+	events       []device.WatchEvent
+	devMode      device.DevMode
 }
 
 func (s *stubDevHandler) Close() error                                   { return nil }
@@ -46,8 +53,23 @@ func (s *stubDevHandler) Launch(ctx context.Context, udid, bundleID string, env 
 	return 4242, nil
 }
 func (s *stubDevHandler) Kill(ctx context.Context, udid string, pid uint64) error { return nil }
-func (s *stubDevHandler) Syslog(ctx context.Context, udid string, w io.Writer) error {
+func (s *stubDevHandler) Syslog(ctx context.Context, udid string, w io.Writer, filter device.LogFilter) error {
+	s.syslogFilter = filter
 	return nil
+}
+func (s *stubDevHandler) Screenshot(ctx context.Context, udid string) ([]byte, error) {
+	return s.shot, nil
+}
+func (s *stubDevHandler) Watch(ctx context.Context, fn func(device.WatchEvent) error) error {
+	for _, ev := range s.events {
+		if err := fn(ev); err != nil {
+			return err
+		}
+	}
+	return ctx.Err()
+}
+func (s *stubDevHandler) DevModeStatus(ctx context.Context, udid string) (device.DevMode, error) {
+	return s.devMode, nil
 }
 func (s *stubDevHandler) Restart(ctx context.Context, udid string) error { return nil }
 func (s *stubDevHandler) OmegaRestore(ctx context.Context, udid string, progress func(float64)) error {
@@ -61,10 +83,19 @@ func (s *stubDevHandler) Shutdown(ctx context.Context, udid string) error { retu
 
 func runDeviceCmd(t *testing.T, sub string, args ...string) (string, error) {
 	t.Helper()
-	stub := &stubDevHandler{
-		devs: []device.Dev{{UDID: "AAAA", Transport: device.TransportUSB}},
-		info: device.Info{Name: "Phone", ProductVersion: "18.1", BuildVersion: "22B83"},
-		apps: []device.App{{BundleID: "com.x.app", Name: "Xapp", Path: "/var/x"}},
+	return runDeviceCmdStub(t, nil, sub, args...)
+}
+
+// runDeviceCmdStub runs one device subcommand against the given handler
+// (a default stub when nil) and returns its output.
+func runDeviceCmdStub(t *testing.T, stub *stubDevHandler, sub string, args ...string) (string, error) {
+	t.Helper()
+	if stub == nil {
+		stub = &stubDevHandler{
+			devs: []device.Dev{{UDID: "AAAA", Transport: device.TransportUSB}},
+			info: device.Info{Name: "Phone", ProductVersion: "18.1", BuildVersion: "22B83"},
+			apps: []device.App{{BundleID: "com.x.app", Name: "Xapp", Path: "/var/x"}},
+		}
 	}
 	orig := deviceHandler
 	deviceHandler = func(o device.Options) device.Handler { return stub }
@@ -339,5 +370,127 @@ func TestDeviceDoctorReachable(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "transport ready") {
 		t.Errorf("doctor success output missing ready line: %q", out.String())
+	}
+}
+
+func TestDeviceSyslogPassesFilter(t *testing.T) {
+	stub := &stubDevHandler{devs: []device.Dev{{UDID: "AAAA", Transport: device.TransportUSB}}}
+	orig := deviceHandler
+	deviceHandler = func(o device.Options) device.Handler { return stub }
+	t.Cleanup(func() { deviceHandler = orig })
+
+	cmd := newDeviceCmd()
+	cmd.SetArgs([]string{"syslog", "--process", "Spring", "--contains", "crash"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if stub.syslogFilter.Process != "Spring" || stub.syslogFilter.Contains != "crash" {
+		t.Fatalf("filter flags must reach the handler, got %+v", stub.syslogFilter)
+	}
+}
+
+func TestDeviceScreenshotWritesPNG(t *testing.T) {
+	dir := t.TempDir()
+	stub := &stubDevHandler{
+		devs: []device.Dev{{UDID: "AAAA", Transport: device.TransportUSB}},
+		shot: append([]byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}, make([]byte, 16)...),
+	}
+	orig := deviceHandler
+	deviceHandler = func(o device.Options) device.Handler { return stub }
+	t.Cleanup(func() { deviceHandler = orig })
+
+	out := filepath.Join(dir, "shot.png")
+	if _, err := runDeviceCmdStub(t, stub, "screenshot", out); err != nil {
+		t.Fatal(err)
+	}
+	data, rerr := os.ReadFile(out)
+	if rerr != nil || len(data) != len(stub.shot) {
+		t.Fatalf("screenshot file missing or truncated: %v", rerr)
+	}
+
+	// No path argument: a timestamped default appears in the CWD.
+	before := time.Now().Format("20060102")
+	cwd, _ := os.Getwd()
+	os.Chdir(dir)
+	t.Cleanup(func() { os.Chdir(cwd) })
+	path, err := runDeviceCmdCapturePath(t, stub, "screenshot")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(filepath.Base(path), "screenshot-"+before+"-") || !strings.HasSuffix(path, ".png") {
+		t.Fatalf("default screenshot name off: %q", path)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("default-path screenshot not written: %v", err)
+	}
+}
+
+// runDeviceCmdCapturePath runs the command and returns the "saved <path>"
+// log target from the output.
+func runDeviceCmdCapturePath(t *testing.T, stub *stubDevHandler, sub string, args ...string) (string, error) {
+	t.Helper()
+	var out bytes.Buffer
+	cmd := newDeviceCmd()
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	log.SetWriters(&out, &out)
+	t.Cleanup(func() { log.SetWriters(os.Stderr, os.Stderr) })
+	cmd.SetArgs(append([]string{sub}, args...))
+	if err := cmd.Execute(); err != nil {
+		return "", err
+	}
+	line := out.String()
+	i := strings.Index(line, "saved ")
+	if i < 0 {
+		return "", errors.New("no saved line in output: " + line)
+	}
+	return strings.TrimSpace(line[i+len("saved "):]), nil
+}
+
+func TestDeviceWatchStreamsEvents(t *testing.T) {
+	stub := &stubDevHandler{
+		devs:   []device.Dev{{UDID: "AAAA", Transport: device.TransportUSB}},
+		events: []device.WatchEvent{{UDID: "BBBB", Attached: true}, {UDID: "AAAA", Attached: false}},
+	}
+	orig := deviceHandler
+	deviceHandler = func(o device.Options) device.Handler { return stub }
+	t.Cleanup(func() { deviceHandler = orig })
+
+	out, err := runDeviceCmdStub(t, stub, "watch")
+	if err != nil && !strings.Contains(err.Error(), "context") {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "attached BBBB") || !strings.Contains(out, "detached AAAA") {
+		t.Fatalf("watch events missing from output: %q", out)
+	}
+}
+
+func TestDeviceDevModeStatesRender(t *testing.T) {
+	cases := []struct {
+		name string
+		dm   device.DevMode
+		want string
+	}{
+		{"on", device.DevMode{Reported: true, Enabled: true}, "developer mode: ON"},
+		{"off", device.DevMode{Reported: true}, "developer mode: OFF"},
+		{"pre16", device.DevMode{}, "not gated on this iOS"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stub := &stubDevHandler{
+				devs:    []device.Dev{{UDID: "AAAA", Transport: device.TransportUSB}},
+				devMode: tc.dm,
+			}
+			orig := deviceHandler
+			deviceHandler = func(o device.Options) device.Handler { return stub }
+			t.Cleanup(func() { deviceHandler = orig })
+			out, err := runDeviceCmdStub(t, stub, "devmode")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(out, tc.want) {
+				t.Fatalf("want %q in %q", tc.want, out)
+			}
+		})
 	}
 }

@@ -2,7 +2,7 @@
 
 **Purpose of this file:** bring a new agent/session up to speed on the xkvm
 project without re-reading the whole tree. Read this first, then follow the
-links. Last updated: 2026-08-16.
+links. Last updated: 2026-08-23.
 
 ---
 
@@ -73,7 +73,7 @@ Root: `xkvm [flags] -i <app>` (inject). Every other verb is a subcommand.
 | `xkvm fetch`-equivalent | **Folded into inject**: `-f <repo-package-id> --fetch` resolves through Canister/MobileAPT (M4) |
 | `xkvm cache [--clear]` | Show or empty the persistent fetch cache (`~/Library/Caches/xkvm/fetch`, 7-day TTL) |
 | `xkvm decrypt <app-id\|app-store-url\|bundle-id>` | Download an App Store app by Apple ID (bag → auth → buy → sinfs + metadata) |
-| `xkvm device <op>` | Control a connected iPhone/iPad via go-ios: list/pair/info/battery/apps/install/uninstall/launch/kill/syslog/restart/shutdown (`--udid`, `--json`; policy + errors in docs/device-control.md) |
+| `xkvm device <op>` | Control a connected iPhone/iPad via go-ios: list/pair/info/battery/apps/install/uninstall/launch/kill/syslog/restart/shutdown/watch/screenshot/devmode/omega. iOS 17+ tunnel-gated ops auto-start a userspace developer tunnel (XKVM_NO_AUTO_TUNNEL=1 declines); syslog filters with --process/--contains (`--udid`, `--json`; policy + errors in docs/device-control.md) |
 
 ### Key root flags (inject)
 
@@ -267,10 +267,21 @@ the CLI binds `--<name>` flags automatically (sorted). Mach-O-touching patches
 must follow the strip-edit-resign discipline (extract ents → remove sig → edit
 → sign with ents). Mutual exclusivity lives in `Options.validate()`.
 
-## 8. Current state (2026-08-16) — read this before starting work
+## 8. Current state (2026-08-23) — read this before starting work
 
-**HEAD `5e9f4d1` is pushed and the tree is clean.** Three batches landed after
-`d3da30d`:
+**HEAD is past `5e9f4d1`; read `git log` for the live list.** Batches since
+then, newest first:
+
+- Device-control parity batch (this one): auto-managed iOS 17+ developer
+  tunnels (discover -> spawn -> retry; `internal/device/tunnel.go`,
+  XKVM_NO_AUTO_TUNNEL kill-switch), os_trace syslog fallback over the tunnel,
+  `device watch` / `screenshot` / `devmode`, syslog `--process/--contains`
+  filters, entitlements plist pre-validation in Options.validate.
+- Agent-context docs (fe98d3a + f74a18a): AGENTS.md expanded, CLAUDE.md,
+  docs/PRD.md, docs/TTD.md, docs/ARCHITECTURE_OVERVIEW.md added then made
+  LOCAL-ONLY (untracked + gitignored). A fresh clone will not have them;
+  do not re-commit them.
+- Earlier batches after d3da30d:
 
 - `7b7e373` — `xkvm decrypt` (App Store ipatool flow): M5 §5.7 contract in
   ARCHITECTURE.md, the `internal/decrypt` package (16 hermetic tests; incl. the

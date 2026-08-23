@@ -33,9 +33,13 @@ type fake struct {
 	killErr     error
 	syslogOut   string
 	syslogErr   error
+	watchEvents []WatchEvent
 	restarts    int
 	shutdowns   int
 }
+
+// pngMagic is the smallest answer that satisfies the CLI's magic sniffing.
+var pngMagic = []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}
 
 type pairCall struct {
 	udid string
@@ -104,11 +108,25 @@ func (f *fake) Kill(ctx context.Context, udid string, pid uint64) error {
 	f.killCalls = append(f.killCalls, pid)
 	return f.killErr
 }
-func (f *fake) Syslog(ctx context.Context, udid string, w io.Writer) error {
+func (f *fake) Syslog(ctx context.Context, udid string, w io.Writer, filter LogFilter) error {
 	if f.syslogOut != "" {
 		io.WriteString(w, f.syslogOut)
 	}
 	return f.syslogErr
+}
+func (f *fake) Screenshot(ctx context.Context, udid string) ([]byte, error) {
+	return pngMagic, nil
+}
+func (f *fake) Watch(ctx context.Context, fn func(WatchEvent) error) error {
+	for _, ev := range f.watchEvents {
+		if err := fn(ev); err != nil {
+			return err
+		}
+	}
+	return ctx.Err()
+}
+func (f *fake) DevModeStatus(ctx context.Context, udid string) (DevMode, error) {
+	return DevMode{Enabled: true, Reported: true}, nil
 }
 func (f *fake) Restart(ctx context.Context, udid string) error { f.restarts++; return nil }
 func (f *fake) OmegaRestore(ctx context.Context, udid string, progress func(float64)) error {
@@ -267,7 +285,7 @@ func TestBatchOfOps(t *testing.T) {
 		t.Errorf("launch args not forwarded: %+v", f.launchCalls[0])
 	}
 	var buf bytes.Buffer
-	if err := h.Syslog(context.Background(), "A", &buf); err != nil {
+	if err := h.Syslog(context.Background(), "A", &buf, LogFilter{}); err != nil {
 		t.Fatal(err)
 	}
 }

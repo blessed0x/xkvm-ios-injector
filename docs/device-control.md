@@ -28,12 +28,42 @@ loop: **pair → inspect → install → launch → observe**. Same transport fa
 | `install <ipa>` | zip-conduit install (Xcode path) | `zipconduit.SendFile` |
 | `uninstall <id>` | instance proxy uninstall | `installationproxy.Uninstall` |
 | `launch <id>` / `kill <pid>` | process control | `instruments.ProcessControl` |
-| `syslog` | stream parsed logs | `syslog.New` + `ReadLogMessage` |
+| `syslog` | stream parsed logs (`--process`, `--contains`) | `syslog.New` + `ReadLogMessage`; iOS 17+: `ostrace` over the tunnel |
 | `restart` / `shutdown` | diagnostics service | `diagnostics.Reboot/Shutdown` |
+| `watch` | live usbmuxd attach/detach events (Ctrl-C stops) | `ios.Listen()` |
+| `screenshot [f.png]` | save a PNG of the screen (timestamped default; JPEG answers get `.jpg`) | `instruments.ScreenshotService.TakeScreenshot` |
+| `devmode` | iOS 16+ Developer Mode switch status + remediation | lockdown GetValue `com.apple.security.mac.amfi` / `DeveloperModeStatus` |
+| `omega` | revoke/cert blacklist remover (partial restore) | `mobilebackup2` device-link session, in-memory backup |
 
 Flags: `--udid` (resolve ambiguity), `--network` (prefer network transports),
 `--timeout` (per-service dial default 15s), `--json` (machine output for
-`info`/`apps`/`battery`/`doctor`).
+`info`/`apps`/`battery`/`doctor`/`devmode`).
+
+### The iOS 17+ developer tunnel — discovered and auto-started
+
+Stock iOS 17 gates process control, install, screenshot and os_trace behind
+a CoreDevice tunnel (the same prerequisite pymobiledevice3 has). go-ios ships
+a userspace tunnel that publishes its coordinates on a local HTTP endpoint
+(`127.0.0.1:60105`, `GO_IOS_AGENT_HOST`/`GO_IOS_AGENT_PORT`). xkvm consumes
+that contract directly (`internal/device/tunnel.go`, no gvisor/quic-go
+dependency):
+
+1. **Discover** — every gated op resolves its device entry through
+   `tunneledEntry`, which stamps already-published tunnel coordinates onto
+   the entry (the same stamping go-ios's own CLI does). A tunnel started by
+   a previous run, by `go-ios tunnel start`, or kept alive between xkvm
+   invocations is picked up with zero extra work.
+2. **Auto-start** — when an op still hits the gate, xkvm spawns the
+   canonical command as a session-scoped child
+   (`go run github.com/danielpaulus/go-ios@v1.3.2 tunnel start --userspace
+   --udid <UDID>`), polls the endpoint until coordinates appear (90s budget;
+   first-ever run may download the module), then retries the operation once
+   over the tunnel. The child dies with the xkvm process.
+3. **Decline** — `XKVM_NO_AUTO_TUNNEL=1` always prints the manual command
+   instead; spawn failures fall back to it too.
+
+The classic syslog relay is gone on stock iOS 17+; there `xkvm device syslog`
+streams the os_trace relay over that same auto-managed tunnel.
 
 **Transport prerequisites (per OS)** — `xkvm device doctor` probes the exact
 endpoint go-ios will dial, honoring `USBMUXD_SOCKET_ADDRESS`, and prints a

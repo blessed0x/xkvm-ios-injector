@@ -259,7 +259,7 @@ func (u *UI) dvSyslog() {
 	lines := make(chan string, 128)
 	done := make(chan error, 1)
 	go func() {
-		done <- u.Device.Syslog(ctx, target.UDID, &chanWriter{ch: lines, ctx: ctx})
+		done <- u.Device.Syslog(ctx, target.UDID, &chanWriter{ch: lines, ctx: ctx}, device.LogFilter{})
 	}()
 	u.say(cCyan, "streaming "+target.UDID+" — lines appear as the device emits them; press Enter to stop")
 	stop := make(chan struct{})
