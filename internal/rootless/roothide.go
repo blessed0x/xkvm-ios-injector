@@ -641,11 +641,11 @@ func mergedPlatformEntitlements(b macho.Bin, origEnts []byte) ([]byte, error) {
 		existing = cur
 	}
 	if len(existing) > 0 {
-		if d, derr := plist.Decode(existing); derr != nil {
+		d, derr := plist.Decode(existing)
+		if derr != nil {
 			return nil, fmt.Errorf("decoding existing entitlements: %w", derr)
-		} else {
-			merged = d
 		}
+		merged = d
 	}
 	base, err := plist.Decode([]byte(roothideEntitlements))
 	if err != nil {

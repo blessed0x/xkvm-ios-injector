@@ -3,6 +3,7 @@ package app
 
 import (
 	"fmt"
+	howett "howett.net/plist"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -164,9 +165,16 @@ func (o *Options) validate() error {
 		if p != "" && !isRegularFile(p) {
 			return fmt.Errorf("%s: %s does not exist", label, p)
 		}
-		// TODO(M1): cyan also parses the entitlements file as a plist and
-		// exits on failure ("couldn't parse given entitlements file");
-		// add that check when howett.net/plist lands.
+		// Parse entitlements as a plist to catch malformed files early.
+		if label == "entitlements" && p != "" {
+			data, err := os.ReadFile(p)
+			if err != nil {
+				return fmt.Errorf("couldn't read entitlements file: %w", err)
+			}
+			if _, err := howett.Unmarshal(data, &struct{}{}); err != nil {
+				return fmt.Errorf("couldn't parse given entitlements file: %w", err)
+			}
+		}
 	}
 
 	if len(o.Decrypt) > 0 && len(o.Decrypt) != 2 {

@@ -67,11 +67,11 @@ func (g *GoIOS) OmegaRestore(ctx context.Context, udid string, progress func(flo
 // is testable against a scripted peer — everything the wire sees starts
 // here, exactly as the real device sees it.
 func restoreViaLink(ctx context.Context, frames *linkFrames, udid string, backup omegaBackup, dev ios.DeviceEntry, progress func(float64)) error {
-	if err := frames.writeMessage(message{"DLMessageProcessMessage", map[string]interface{}{
+	if err := frames.writeMessage(message{"DLMessageProcessMessage", map[string]any{
 		"MessageName":      "Restore",
 		"TargetIdentifier": udid,
 		"SourceIdentifier": ".",
-		"Options": map[string]interface{}{
+		"Options": map[string]any{
 			"RestoreShouldReboot":     true,
 			"RestoreDontCopyBackup":   true,
 			"RestorePreserveSettings": true,
@@ -98,7 +98,7 @@ func restoreViaLink(ctx context.Context, frames *linkFrames, udid string, backup
 		}
 		switch msg[0] {
 		case "DLMessageProcessMessage":
-			body, _ := msg[1].(map[string]interface{})
+			body, _ := msg[1].(map[string]any)
 			if body == nil {
 				continue
 			}
@@ -127,20 +127,20 @@ func restoreViaLink(ctx context.Context, frames *linkFrames, udid string, backup
 				return nil
 			}
 		case "DLMessageDownloadFiles":
-			names, _ := msg[1].([]interface{})
+			names, _ := msg[1].([]any)
 			if err := serveOmegaFiles(frames, backup, names); err != nil {
 				return &Error{Kind: KindConnection, Op: "omega", Err: err}
 			}
 		case "DLMessageGetFreeDiskSpace", "DLContentsOfDirectory":
-			if err := frames.status(0, map[string]interface{}{}); err != nil {
+			if err := frames.status(0, map[string]any{}); err != nil {
 				return &Error{Kind: KindConnection, Op: "omega", Err: err}
 			}
 		case "DLMessageCreateDirectory", "DLMessageRemoveItems", "DLMessageMoveItems", "DLMessageCopyItem":
-			if err := frames.status(0, map[string]interface{}{}); err != nil {
+			if err := frames.status(0, map[string]any{}); err != nil {
 				return &Error{Kind: KindConnection, Op: "omega", Err: err}
 			}
 		case "DLMessagePurgeDiskSpace":
-			if err := frames.status(1, map[string]interface{}{}); err != nil {
+			if err := frames.status(1, map[string]any{}); err != nil {
 				return &Error{Kind: KindConnection, Op: "omega", Err: err}
 			}
 		}
@@ -155,7 +155,7 @@ func progressSafe(progress func(float64), pct float64) {
 
 // serveOmegaFiles answers a DLMessageDownloadFiles batch: name + payload
 // chunks for each requested file, then the zero terminator.
-func serveOmegaFiles(frames *linkFrames, b omegaBackup, names []interface{}) error {
+func serveOmegaFiles(frames *linkFrames, b omegaBackup, names []any) error {
 	var missing []string
 	for _, n := range names {
 		name, _ := n.(string)
@@ -194,16 +194,16 @@ func serveOmegaFiles(frames *linkFrames, b omegaBackup, names []interface{}) err
 		return err
 	}
 	if len(missing) > 0 {
-		status := map[string]interface{}{}
+		status := map[string]any{}
 		for _, m := range missing {
-			status[m] = map[string]interface{}{
+			status[m] = map[string]any{
 				"DLFileErrorString": "local file error",
 				"DLFileErrorCode":   uint64(^uint64(0) - 1), // -13 pattern
 			}
 		}
 		return frames.status(18446744073709551603, status)
 	}
-	return frames.status(0, map[string]interface{}{})
+	return frames.status(0, map[string]any{})
 }
 
 // lookup serves the four manifest files and the payload blobs by name.
@@ -258,7 +258,7 @@ type linkFrames struct {
 	w io.Writer
 }
 
-type message []interface{}
+type message []any
 
 func (f *linkFrames) writeMessage(m message) error {
 	body, err := plist.Marshal(m, plist.XMLFormat)
@@ -283,11 +283,11 @@ func (f *linkFrames) readMessage() (message, error) {
 	if _, err := io.ReadFull(f.r, body); err != nil {
 		return nil, err
 	}
-	var v interface{}
+	var v any
 	if _, err := plist.Unmarshal(body, &v); err != nil {
 		return nil, fmt.Errorf("decoding frame: %w", err)
 	}
-	arr, ok := v.([]interface{})
+	arr, ok := v.([]any)
 	if !ok {
 		return nil, fmt.Errorf("frame is %T, want array", v)
 	}
@@ -311,16 +311,16 @@ func (f *linkFrames) writeRaw(prefix []byte, payload []byte) error {
 }
 
 // status sends a DLMessageStatusResponse.
-func (f *linkFrames) status(code uint64, ctx map[string]interface{}) error {
+func (f *linkFrames) status(code uint64, ctx map[string]any) error {
 	if ctx == nil {
-		ctx = map[string]interface{}{}
+		ctx = map[string]any{}
 	}
 	return f.writeMessage(message{"DLMessageStatusResponse", code, "___EmptyParameterString___", ctx})
 }
 
 // num extracts an unsigned integer from whatever shape the plist decoder
 // produced (howett may hand back int64, uint64, or float64).
-func num(v interface{}) uint64 {
+func num(v any) uint64 {
 	switch t := v.(type) {
 	case uint64:
 		return t

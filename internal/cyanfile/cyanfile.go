@@ -137,21 +137,21 @@ func Parse(path, outDir string) (*Config, error) {
 	}
 
 	// Payload files for the other file-valued flags.
-	if p, e := extractNamed(zr, outDir, "icon.idk", raw, "k"); e != nil {
+	p, e := extractNamed(zr, outDir, "icon.idk", raw, "k")
+	if e != nil {
 		return nil, e
-	} else {
-		cfg.Icon = p
 	}
-	if p, e := extractNamed(zr, outDir, "merge.plist", raw, "l"); e != nil {
+	cfg.Icon = p
+	p, e = extractNamed(zr, outDir, "merge.plist", raw, "l")
+	if e != nil {
 		return nil, e
-	} else {
-		cfg.PlistMerge = p
 	}
-	if p, e := extractNamed(zr, outDir, "new.entitlements", raw, "x"); e != nil {
+	cfg.PlistMerge = p
+	p, e = extractNamed(zr, outDir, "new.entitlements", raw, "x")
+	if e != nil {
 		return nil, e
-	} else {
-		cfg.Entitlement = p
 	}
+	cfg.Entitlement = p
 
 	// Remaining scalar keys override the CLI (upstream: `args[k] = v`).
 	if v, ok := raw["n"]; ok {

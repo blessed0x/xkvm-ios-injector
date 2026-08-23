@@ -287,7 +287,7 @@ func (g *GoIOS) Launch(ctx context.Context, udid, bundleID string, env map[strin
 			// Upstream's own defaults: KillExisting 0 replaces a running
 			// instance (the app relaunches cleanly instead of erroring).
 			opts = map[string]any{"KillExisting": uint64(0)}
-			la   = make([]interface{}, 0, len(args))
+			la   = make([]any, 0, len(args))
 		)
 		for _, a := range args {
 			la = append(la, a)

@@ -105,7 +105,7 @@ func buildOmegaBackup() (omegaBackup, error) {
 		}
 		records = append(records, rec)
 	}
-	status, err := xmlPlist(map[string]interface{}{
+	status, err := xmlPlist(map[string]any{
 		"BackupState":   "new",
 		"Date":          time.Unix(0, 0).UTC(),
 		"IsFullBackup":  false,
@@ -116,16 +116,16 @@ func buildOmegaBackup() (omegaBackup, error) {
 	if err != nil {
 		return omegaBackup{}, err
 	}
-	manifest, err := xmlPlist(map[string]interface{}{
+	manifest, err := xmlPlist(map[string]any{
 		"BackupKeyBag":         keybag,
-		"Lockdown":             map[string]interface{}{},
+		"Lockdown":             map[string]any{},
 		"SystemDomainsVersion": "20.0",
 		"Version":              "9.1",
 	})
 	if err != nil {
 		return omegaBackup{}, err
 	}
-	info, err := xmlPlist(map[string]interface{}{})
+	info, err := xmlPlist(map[string]any{})
 	if err != nil {
 		return omegaBackup{}, err
 	}
@@ -138,7 +138,7 @@ func buildOmegaBackup() (omegaBackup, error) {
 	}, nil
 }
 
-func xmlPlist(v interface{}) ([]byte, error) {
+func xmlPlist(v any) ([]byte, error) {
 	return plist.Marshal(v, plist.XMLFormat)
 }
 
