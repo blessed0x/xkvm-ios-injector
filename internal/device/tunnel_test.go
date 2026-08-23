@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -45,13 +46,23 @@ func (p *fakeProc) finish(err error) {
 // tunnelServer serves /tunnel/<udid> like go-ios's tunnel-info endpoint,
 // publishing only after publish is closed (simulating tunnel setup time).
 type tunnelServer struct {
+	t       *testing.T
 	srv     *httptest.Server
 	mu      sync.Mutex
 	entries map[string]publishedTunnel
 }
 
+func mustAtoi(t testing.TB, s string) int {
+	t.Helper()
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		t.Fatalf("bad port %q: %v", s, err)
+	}
+	return n
+}
+
 func newTunnelServer(t *testing.T) *tunnelServer {
-	ts := &tunnelServer{entries: map[string]publishedTunnel{}}
+	ts := &tunnelServer{t: t, entries: map[string]publishedTunnel{}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/tunnel/", func(w http.ResponseWriter, r *http.Request) {
 		udid := strings.TrimPrefix(r.URL.Path, "/tunnel/")
@@ -82,16 +93,8 @@ func (ts *tunnelServer) publish(udid string) {
 func (ts *tunnelServer) hostPort() (func() string, func() int) {
 	addr := strings.TrimPrefix(ts.srv.URL, "http://")
 	i := strings.LastIndex(addr, ":")
-	host, port := addr[:i], atoi(addr[i+1:])
+	host, port := addr[:i], mustAtoi(ts.t, addr[i+1:])
 	return func() string { return host }, func() int { return port }
-}
-
-func atoi(s string) int {
-	n := 0
-	for _, c := range s {
-		n = n*10 + int(c-'0')
-	}
-	return n
 }
 
 const testUDID = "0000000000000000000deadbeef000000000dead"

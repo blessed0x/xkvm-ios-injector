@@ -6,10 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
-	"strings"
+	"strconv"
 	"sync"
 	"time"
 
@@ -195,7 +196,7 @@ var infoClient = &http.Client{Timeout: 2 * time.Second}
 // tunnel serves this device right now (endpoint down, device absent, or a
 // malformed answer — all render as "no tunnel").
 func (m *tunnelManager) info(udid string) (publishedTunnel, bool) {
-	url := fmt.Sprintf("http://%s/tunnel/%s", net_JoinHostPort(m.apiHost(), m.apiPort()), udid)
+	url := fmt.Sprintf("http://%s/tunnel/%s", net.JoinHostPort(m.apiHost(), strconv.Itoa(m.apiPort())), udid)
 	res, err := infoClient.Get(url)
 	if err != nil {
 		return publishedTunnel{}, false
@@ -212,15 +213,6 @@ func (m *tunnelManager) info(udid string) (publishedTunnel, bool) {
 		return publishedTunnel{}, false
 	}
 	return t, true
-}
-
-// net_JoinHostPort wraps IPv6 literals in brackets without importing net at
-// every call site (net.JoinHostPort).
-func net_JoinHostPort(host string, port int) string {
-	if strings.Contains(host, ":") {
-		return "[" + host + "]:" + fmt.Sprint(port)
-	}
-	return host + ":" + fmt.Sprint(port)
 }
 
 // ensure makes sure a tunnel for udid is up and publishing coordinates,
