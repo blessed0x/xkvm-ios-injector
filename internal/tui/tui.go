@@ -1356,13 +1356,25 @@ func (u *UI) askCredentials() (string, string) {
 
 // zipDebs packs the given files into one archive (flat entries, stored,
 // so any zip tool opens it) and returns the number of files written.
-func zipDebs(paths []string, outZip string) (int, error) {
+func zipDebs(paths []string, outZip string) (n int, err error) {
 	f, err := os.Create(outZip)
 	if err != nil {
 		return 0, err
 	}
-	defer f.Close()
-	zw := zip.NewWriter(f)
+	// Surface Close errors: a swallowed close turns disk-full into a
+	// silently truncated export archive reported as success.
+	defer func() {
+		if cerr := f.Close(); err == nil {
+			err = cerr
+		}
+	}()
+	return zipDebsTo(f, paths)
+}
+
+// zipDebsTo streams the given debs into w as a zip. On its own writer
+// seam so tests can inject write failures.
+func zipDebsTo(w io.Writer, paths []string) (int, error) {
+	zw := zip.NewWriter(w)
 	n := 0
 	for _, p := range paths {
 		src, err := os.Open(p)
