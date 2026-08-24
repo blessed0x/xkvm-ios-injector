@@ -322,6 +322,7 @@ Recent heartbeat batches (each gated by `make qa`, pushed green), newest
 first:
 
 - af59219 — app layer: converter-entry guards pinned (non-.deb / missing input / required output across rootless-xina, rootful, roothide) and fixedOutputPath naming locked (-fixed suffix).
+- 4101729 — error-surface fix: deb.Build/ipa.Repack no longer swallow output-file Close errors (disk-full produced truncated packages reported as success); archive writers moved behind writeArMembers/repackTo seams with failing-writer tests.
 - 3eae185 — ipa properties strengthened: round-trip now hashes file CONTENTS (path-only set could hide repack corruption) and TestRepackDeterministic pins README's same-input-same-output claim byte-for-byte.
 - 5e17a59 — protocol §2c property pinned: rootful -> rootless -> rootful round-trip restores the exact load-command set (no /var/jb survivors) and the iphoneos-arm control, on a real Mach-O fixture (native-gated).
 - 54da691 — plist: ConvertToXML1 pinned (binary->xml round-trip, garbage rejection, exact type fidelity incl. howett's uint64 integer decode).
