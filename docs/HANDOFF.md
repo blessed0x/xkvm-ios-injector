@@ -321,6 +321,7 @@ must follow the strip-edit-resign discipline (extract ents → remove sig → ed
 Recent heartbeat batches (each gated by `make qa`, pushed green), newest
 first:
 
+- 3eae185 — ipa properties strengthened: round-trip now hashes file CONTENTS (path-only set could hide repack corruption) and TestRepackDeterministic pins README's same-input-same-output claim byte-for-byte.
 - 5e17a59 — protocol §2c property pinned: rootful -> rootless -> rootful round-trip restores the exact load-command set (no /var/jb survivors) and the iphoneos-arm control, on a real Mach-O fixture (native-gated).
 - 54da691 — plist: ConvertToXML1 pinned (binary->xml round-trip, garbage rejection, exact type fidelity incl. howett's uint64 integer decode).
 - e7c3296 — stop swallowing AddRpath and decrypt-prefs save errors (surfaced instead of ignored).
