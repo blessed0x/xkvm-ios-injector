@@ -2,6 +2,9 @@ package ipa
 
 import (
 	"archive/zip"
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -288,32 +291,71 @@ func TestRoundTripExtractRepackExtract(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	set1 := relSet(t, filepath.Join(dest1, "Payload"))
-	set2 := relSet(t, filepath.Join(dest2, "Payload"))
+	// Identity must hold for file CONTENTS too — a path-only set would
+	// pass even if repack corrupted bytes.
+	set1 := contentSet(t, filepath.Join(dest1, "Payload"))
+	set2 := contentSet(t, filepath.Join(dest2, "Payload"))
 	if !reflect.DeepEqual(set1, set2) {
 		t.Errorf("round trip changed the app:\nbefore %v\nafter  %v", set1, set2)
 	}
 }
 
-func relSet(t *testing.T, root string) []string {
+// contentSet maps every file's repo-relative path to its sha256, so
+// round-trip comparisons catch byte corruption, not just missing paths.
+func contentSet(t *testing.T, root string) map[string]string {
 	t.Helper()
-	var out []string
+	out := map[string]string{}
 	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
+		}
+		if info.IsDir() {
+			return nil
 		}
 		rel, err := filepath.Rel(root, path)
 		if err != nil {
 			return err
 		}
-		out = append(out, rel)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		sum := sha256.Sum256(data)
+		out[rel] = hex.EncodeToString(sum[:])
 		return nil
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	sort.Strings(out)
 	return out
+}
+
+// TestRepackDeterministic pins README's "deterministic builds" claim: the
+// same input tree repacked twice yields BYTE-IDENTICAL archives (fixed
+// epoch timestamps + lexical walk order make this possible).
+func TestRepackDeterministic(t *testing.T) {
+	dest := t.TempDir()
+	writeAppDir(t, dest, false, false)
+
+	out1 := filepath.Join(t.TempDir(), "a.ipa")
+	out2 := filepath.Join(t.TempDir(), "b.ipa")
+	if err := Repack(dest, out1, 6); err != nil {
+		t.Fatal(err)
+	}
+	if err := Repack(dest, out2, 6); err != nil {
+		t.Fatal(err)
+	}
+	b1, err := os.ReadFile(out1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b2, err := os.ReadFile(out2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(b1, b2) {
+		t.Fatalf("repack is not deterministic: %d vs %d bytes differ", len(b1), len(b2))
+	}
 }
 
 func mustMkdir(t *testing.T, dir string) {
