@@ -321,6 +321,7 @@ must follow the strip-edit-resign discipline (extract ents → remove sig → ed
 Recent heartbeat batches (each gated by `make qa`, pushed green), newest
 first:
 
+- 5e17a59 — protocol §2c property pinned: rootful -> rootless -> rootful round-trip restores the exact load-command set (no /var/jb survivors) and the iphoneos-arm control, on a real Mach-O fixture (native-gated).
 - 54da691 — plist: ConvertToXML1 pinned (binary->xml round-trip, garbage rejection, exact type fidelity incl. howett's uint64 integer decode).
 - e7c3296 — stop swallowing AddRpath and decrypt-prefs save errors (surfaced instead of ignored).
 - 658e2b3 — artifact: collector semantics pinned by tests (all four kinds, nested-skip, symlink skip, double-extension guard).
