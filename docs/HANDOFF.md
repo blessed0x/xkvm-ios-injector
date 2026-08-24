@@ -321,6 +321,9 @@ must follow the strip-edit-resign discipline (extract ents → remove sig → ed
 Recent heartbeat batches (each gated by `make qa`, pushed green), newest
 first:
 
+- 54da691 — plist: ConvertToXML1 pinned (binary->xml round-trip, garbage rejection, exact type fidelity incl. howett's uint64 integer decode).
+- e7c3296 — stop swallowing AddRpath and decrypt-prefs save errors (surfaced instead of ignored).
+- 658e2b3 — artifact: collector semantics pinned by tests (all four kinds, nested-skip, symlink skip, double-extension guard).
 - accab7d — gate-classification fix: tunnelGate missed go-ios's VERBATIM iOS 17 error ('missing tunnel address and RSD port') — auto-tunnel would never have fired on a real gated device; now case-insensitive with both phrasings, pinned by TestTunnelGateClassification.
 - 1e7f6e1 — fetch UX: paid-package blocks (Havoc 418/402 + 'paid' body) now say 'X is a PAID package on <host> — buy once in Sileo/Zebra, export the deb' instead of a bare HTTP status; found by live use fetching com.opa334.crane (paid, Havoc-exclusive — full 107-repo sweep confirmed no other host).
 - `0a4a3ef` — handoff records the idev repo split and the phase-2 plan.
