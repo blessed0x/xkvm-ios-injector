@@ -3,6 +3,8 @@ package rootless
 import (
 	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
@@ -242,4 +244,86 @@ func copyFile(t *testing.T, src, dst string) error {
 		return err
 	}
 	return os.WriteFile(dst, data, 0o644)
+}
+
+// TestRootlessRoundTripPreservesLoadCommands pins the protocol's §2c
+// property: rootful -> rootless -> rootful must restore the original
+// load-command set exactly — no /var/jb survivors, no lost dependencies,
+// and the control Architecture back to iphoneos-arm.
+func TestRootlessRoundTripPreservesLoadCommands(t *testing.T) {
+	testutil.SkipUnlessNativeToolchain(t)
+	tmp := t.TempDir()
+
+	tweak := testutil.MakeTweak(t, tmp, "RoundTrip")
+	b := macho.Bin{Path: tweak}
+	for _, dep := range []string{
+		"/usr/lib/libsubstrate.dylib",
+		"/Library/MobileSubstrate/DynamicLibraries/Sibling.dylib",
+		"@rpath/Local.framework/Local",
+	} {
+		if err := b.InjectWeak(dep); err != nil {
+			t.Fatalf("InjectWeak(%s): %v", dep, err)
+		}
+	}
+	origDeps, err := b.AllDependencies()
+	if err != nil {
+		t.Fatalf("AllDependencies (original): %v", err)
+	}
+
+	staging := filepath.Join(tmp, "staging")
+	os.MkdirAll(filepath.Join(staging, "DEBIAN"), 0o755)
+	control := "Package: roundtrip\nVersion: 1.0\nArchitecture: iphoneos-arm\nDepends: mobilesubstrate\nDescription: test tweak\nMaintainer: xkvm\n"
+	if err := os.WriteFile(filepath.Join(staging, "DEBIAN", "control"), []byte(control), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	payloadDir := filepath.Join(staging, "Library", "MobileSubstrate", "DynamicLibraries")
+	os.MkdirAll(payloadDir, 0o755)
+	if err := copyFile(t, tweak, filepath.Join(payloadDir, "RoundTrip.dylib")); err != nil {
+		t.Fatal(err)
+	}
+	rootful := filepath.Join(tmp, "rootful.deb")
+	if err := deb.Build(staging, rootful); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	forward := filepath.Join(tmp, "rootless.deb")
+	if err := Convert(rootful, forward, false, false); err != nil {
+		t.Fatalf("Convert (to rootless): %v", err)
+	}
+	back := filepath.Join(tmp, "back.deb")
+	if err := ConvertToRootful(forward, back); err != nil {
+		t.Fatalf("ConvertToRootful: %v", err)
+	}
+
+	unpacked := filepath.Join(tmp, "unpacked")
+	if err := deb.Unpack(back, unpacked); err != nil {
+		t.Fatalf("Unpack: %v", err)
+	}
+	restored := filepath.Join(unpacked, "Library", "MobileSubstrate", "DynamicLibraries", "RoundTrip.dylib")
+	if _, err := os.Stat(restored); err != nil {
+		t.Fatalf("round-trip payload missing at %s: %v", restored, err)
+	}
+
+	backDeps, err := (macho.Bin{Path: restored}).AllDependencies()
+	if err != nil {
+		t.Fatalf("AllDependencies (round-trip): %v", err)
+	}
+	sort.Strings(origDeps)
+	sort.Strings(backDeps)
+	if !reflect.DeepEqual(origDeps, backDeps) {
+		t.Fatalf("load-command set drifted across the round trip:\n orig  %v\n back  %v", origDeps, backDeps)
+	}
+	for _, dep := range backDeps {
+		if strings.Contains(dep, "/var/jb") {
+			t.Errorf("round-trip survivor: %q", dep)
+		}
+	}
+
+	ctlData, err := os.ReadFile(filepath.Join(unpacked, "DEBIAN", "control"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(ctlData), "Architecture: iphoneos-arm") {
+		t.Errorf("control must be back to iphoneos-arm; got:\n%s", ctlData)
+	}
 }
