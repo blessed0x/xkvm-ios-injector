@@ -5,10 +5,12 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 )
@@ -369,5 +371,27 @@ func mustWrite(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// failWriter fails once more than n bytes are written, simulating a disk
+// that fills mid-archive.
+type failWriter struct{ n int }
+
+func (w *failWriter) Write(p []byte) (int, error) {
+	if len(p) > w.n {
+		return 0, errors.New("fake disk full")
+	}
+	w.n -= len(p)
+	return len(p), nil
+}
+
+func TestRepackToSurfacesWriteFailure(t *testing.T) {
+	dir := t.TempDir()
+	writeAppDir(t, dir, false, false)
+	w := &failWriter{n: 64} // dies well before the archive finishes
+	err := repackTo(filepath.Join(dir, "Payload"), w, 6)
+	if err == nil || !strings.Contains(err.Error(), "fake disk full") {
+		t.Fatalf("write failure must surface, got %v", err)
 	}
 }

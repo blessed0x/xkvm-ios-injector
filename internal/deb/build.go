@@ -62,7 +62,7 @@ func (c Control) String() string {
 // control.tar.gz, every other file becomes data.tar.gz, and payload entries
 // are written with the canonical "./" prefix. Symlinks are preserved as tar
 // symlink entries. Timestamps are zeroed for reproducible builds.
-func Build(root, dest string) error {
+func Build(root, dest string) (err error) {
 	controlTar, err := tarDir(filepath.Join(root, "DEBIAN"), true)
 	if err != nil {
 		return fmt.Errorf("building control.tar.gz: %w", err)
@@ -84,8 +84,24 @@ func Build(root, dest string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	if _, err := f.WriteString(arMagic); err != nil {
+	// Surface Close errors: a swallowed close turns disk-full into a
+	// silently truncated .deb reported as success.
+	defer func() {
+		if cerr := f.Close(); err == nil {
+			err = cerr
+		}
+	}()
+	return writeArMembers(f, members)
+}
+
+// writeArMembers serializes the ar container: magic, then a 60-byte header
+// plus (even-padded) payload per member. On its own writer seam so tests
+// can inject write failures.
+func writeArMembers(w io.Writer, members []struct {
+	name    string
+	content []byte
+}) error {
+	if _, err := w.Write([]byte(arMagic)); err != nil {
 		return err
 	}
 	for _, m := range members {
@@ -93,14 +109,14 @@ func Build(root, dest string) error {
 		if len(hdr) != 60 {
 			return fmt.Errorf("internal: bad ar header length %d", len(hdr))
 		}
-		if _, err := f.WriteString(hdr); err != nil {
+		if _, err := io.WriteString(w, hdr); err != nil {
 			return err
 		}
-		if _, err := f.Write(m.content); err != nil {
+		if _, err := w.Write(m.content); err != nil {
 			return err
 		}
 		if len(m.content)%2 == 1 {
-			if _, err := f.WriteString("\n"); err != nil {
+			if _, err := io.WriteString(w, "\n"); err != nil {
 				return err
 			}
 		}

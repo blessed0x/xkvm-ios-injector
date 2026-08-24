@@ -82,7 +82,7 @@ func FindApp(dest string) (string, error) {
 // (0-9). Hidden entries — any path component starting with "." — are excluded,
 // mirroring cyan's `zip -r -{level} -x "*/.*"` (an installd workaround). File
 // symlinks are dereferenced like `zip` does; directory symlinks are skipped.
-func Repack(tmpdir, output string, level int) error {
+func Repack(tmpdir, output string, level int) (err error) {
 	payload := filepath.Join(tmpdir, "Payload")
 	if _, err := os.Stat(payload); err != nil {
 		return fmt.Errorf("no Payload directory to repack: %w", err)
@@ -95,16 +95,28 @@ func Repack(tmpdir, output string, level int) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	// Surface Close errors: a swallowed close turns disk-full into a
+	// silently truncated .ipa reported as success.
+	defer func() {
+		if cerr := f.Close(); err == nil {
+			err = cerr
+		}
+	}()
 
-	zw := zip.NewWriter(f)
+	return repackTo(payload, f, level)
+}
+
+// repackTo streams the Payload tree into w as an .ipa zip. On its own
+// writer seam so tests can inject write failures (disk full mid-archive).
+func repackTo(payload string, w io.Writer, level int) error {
+	zw := zip.NewWriter(w)
 	if level > 0 {
 		zw.RegisterCompressor(zip.Deflate, func(out io.Writer) (io.WriteCloser, error) {
 			return flate.NewWriter(out, level)
 		})
 	}
 
-	err = filepath.WalkDir(payload, func(path string, d fs.DirEntry, walkErr error) error {
+	err := filepath.WalkDir(payload, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -115,7 +127,7 @@ func Repack(tmpdir, output string, level int) error {
 			return nil
 		}
 
-		rel, err := filepath.Rel(tmpdir, path)
+		rel, err := filepath.Rel(filepath.Dir(payload), path)
 		if err != nil {
 			return err
 		}
