@@ -208,7 +208,8 @@ auto-warn on missing bundle-relative deps (the check tiers)
 - **Test style.** Every behavior change ships with a test. House style:
   golden/byte-identical tests vs upstream, hermetic httptest for network
   (Canister/MobileAPT/decrypt), `SkipUnlessNativeToolchain` for tests that
-  compile Mach-Os, `-race` in CI. Full suite is green across all 18 packages.
+  compile Mach-Os, `-race` in CI. Full suite is green across all test-covered
+  packages (19 of the module's 21 as of the fsutil addition).
 - **Self-improve protocol.** `docs/self-improve-protocol.md` (committed-when-pushed;
   currently in the working tree) + `make qa` is the standard pre-commit gate.
   Staticcheck and govulncheck are pinned in go.mod via the `tool` directive; `make lint` runs both with zero
