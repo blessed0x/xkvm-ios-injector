@@ -60,11 +60,11 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/xscope0/xkvm-ios-injector/internal/deb"
-	"github.com/xscope0/xkvm-ios-injector/internal/fsutil"
-	"github.com/xscope0/xkvm-ios-injector/internal/log"
-	"github.com/xscope0/xkvm-ios-injector/internal/macho"
-	"github.com/xscope0/xkvm-ios-injector/internal/plist"
+	"github.com/blessed0x/xkvm-ios-injector/internal/deb"
+	"github.com/blessed0x/xkvm-ios-injector/internal/fsutil"
+	"github.com/blessed0x/xkvm-ios-injector/internal/log"
+	"github.com/blessed0x/xkvm-ios-injector/internal/macho"
+	"github.com/blessed0x/xkvm-ios-injector/internal/plist"
 )
 
 // RoothideOutputArch is the architecture roothide packages are re-arch'd to.

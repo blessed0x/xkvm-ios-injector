@@ -9,11 +9,11 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/xscope0/xkvm-ios-injector/internal/appbundle"
-	"github.com/xscope0/xkvm-ios-injector/internal/deb"
-	"github.com/xscope0/xkvm-ios-injector/internal/fetch"
-	"github.com/xscope0/xkvm-ios-injector/internal/ipa"
-	"github.com/xscope0/xkvm-ios-injector/internal/log"
+	"github.com/blessed0x/xkvm-ios-injector/internal/appbundle"
+	"github.com/blessed0x/xkvm-ios-injector/internal/deb"
+	"github.com/blessed0x/xkvm-ios-injector/internal/fetch"
+	"github.com/blessed0x/xkvm-ios-injector/internal/ipa"
+	"github.com/blessed0x/xkvm-ios-injector/internal/log"
 )
 
 // FixOptions controls the auto-resolution behavior of CheckAndFix. Confirm is

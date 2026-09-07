@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xscope0/xkvm-ios-injector/internal/log"
+	"github.com/blessed0x/xkvm-ios-injector/internal/log"
 )
 
 // defaultClient is used when Resolve is called without a client.

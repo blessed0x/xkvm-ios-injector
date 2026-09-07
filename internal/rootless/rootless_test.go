@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xscope0/xkvm-ios-injector/internal/deb"
-	"github.com/xscope0/xkvm-ios-injector/internal/macho"
-	"github.com/xscope0/xkvm-ios-injector/internal/testutil"
+	"github.com/blessed0x/xkvm-ios-injector/internal/deb"
+	"github.com/blessed0x/xkvm-ios-injector/internal/macho"
+	"github.com/blessed0x/xkvm-ios-injector/internal/testutil"
 )
 
 // TestShouldConvert pins the rootless-patcher conversion semantics: first

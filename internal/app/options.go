@@ -12,7 +12,7 @@ import (
 
 // Version is the xkvm release version. Source builds report the dev marker;
 // release builds override it via -ldflags "-X
-// github.com/xscope0/xkvm-ios-injector/internal/app.Version=vX.Y.Z"
+// github.com/blessed0x/xkvm-ios-injector/internal/app.Version=vX.Y.Z"
 // (goreleaser sets this from the git tag).
 var Version = "0.1.0-dev"
 

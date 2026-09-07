@@ -23,7 +23,7 @@ import (
 	"github.com/ulikunitz/xz"
 	"github.com/ulikunitz/xz/lzma"
 
-	"github.com/xscope0/xkvm-ios-injector/internal/artifact"
+	"github.com/blessed0x/xkvm-ios-injector/internal/artifact"
 )
 
 // ErrNotADeb is returned when the input is not an ar archive containing a

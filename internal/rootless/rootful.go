@@ -38,9 +38,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/xscope0/xkvm-ios-injector/internal/deb"
-	"github.com/xscope0/xkvm-ios-injector/internal/log"
-	"github.com/xscope0/xkvm-ios-injector/internal/macho"
+	"github.com/blessed0x/xkvm-ios-injector/internal/deb"
+	"github.com/blessed0x/xkvm-ios-injector/internal/log"
+	"github.com/blessed0x/xkvm-ios-injector/internal/macho"
 )
 
 // rootfulByteSeds are the inverse of the Xina byte-seds, NUL-anchored

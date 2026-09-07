@@ -10,8 +10,8 @@ import (
 
 	"golang.org/x/image/draw"
 
-	"github.com/xscope0/xkvm-ios-injector/internal/log"
-	"github.com/xscope0/xkvm-ios-injector/internal/plist"
+	"github.com/blessed0x/xkvm-ios-injector/internal/log"
+	"github.com/blessed0x/xkvm-ios-injector/internal/plist"
 )
 
 // ChangeIcon replaces the app icon: the source is scaled to 120x120 and

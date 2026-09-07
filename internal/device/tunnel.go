@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/danielpaulus/go-ios/ios"
-	"github.com/xscope0/xkvm-ios-injector/internal/log"
+	"github.com/blessed0x/xkvm-ios-injector/internal/log"
 )
 
 // The tunnel-info endpoint contract is three lines of HTTP: go-ios's

@@ -11,14 +11,14 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/xscope0/xkvm-ios-injector/internal/app"
-	"github.com/xscope0/xkvm-ios-injector/internal/cyanfile"
-	"github.com/xscope0/xkvm-ios-injector/internal/decrypt"
-	"github.com/xscope0/xkvm-ios-injector/internal/device"
-	"github.com/xscope0/xkvm-ios-injector/internal/fetch"
-	"github.com/xscope0/xkvm-ios-injector/internal/log"
-	"github.com/xscope0/xkvm-ios-injector/internal/patch"
-	"github.com/xscope0/xkvm-ios-injector/internal/tui"
+	"github.com/blessed0x/xkvm-ios-injector/internal/app"
+	"github.com/blessed0x/xkvm-ios-injector/internal/cyanfile"
+	"github.com/blessed0x/xkvm-ios-injector/internal/decrypt"
+	"github.com/blessed0x/xkvm-ios-injector/internal/device"
+	"github.com/blessed0x/xkvm-ios-injector/internal/fetch"
+	"github.com/blessed0x/xkvm-ios-injector/internal/log"
+	"github.com/blessed0x/xkvm-ios-injector/internal/patch"
+	"github.com/blessed0x/xkvm-ios-injector/internal/tui"
 )
 
 // Runner is the injectable pipeline entry point. Tests replace it with a
@@ -96,7 +96,7 @@ to the -i input; the result is written to -o, or overwrites the input.`,
 					// A stale binary (or a typo) treats an unknown subcommand
 					// as a positional arg, then fails here with a confusing
 					// "input not set". Point at the real fix: reinstall.
-					return fmt.Errorf("required flag(s) \"input\" not set\n\n  did you mean a subcommand? %q isn't one. if you recently installed xkvm,\n  your copy may be out of date; reinstall with:\n\n    go install github.com/xscope0/xkvm-ios-injector/cmd/xkvm@main\n\n  then run 'xkvm --help' to see the current commands", args[0])
+					return fmt.Errorf("required flag(s) \"input\" not set\n\n  did you mean a subcommand? %q isn't one. if you recently installed xkvm,\n  your copy may be out of date; reinstall with:\n\n    go install github.com/blessed0x/xkvm-ios-injector/cmd/xkvm@main\n\n  then run 'xkvm --help' to see the current commands", args[0])
 				}
 				if cmd.Flags().NFlag() == 0 {
 					// Bare `xkvm`: no input, no flags, no subcommand — open the

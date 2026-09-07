@@ -11,9 +11,9 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/xscope0/xkvm-ios-injector/internal/app"
-	"github.com/xscope0/xkvm-ios-injector/internal/decrypt"
-	"github.com/xscope0/xkvm-ios-injector/internal/fetch"
+	"github.com/blessed0x/xkvm-ios-injector/internal/app"
+	"github.com/blessed0x/xkvm-ios-injector/internal/decrypt"
+	"github.com/blessed0x/xkvm-ios-injector/internal/fetch"
 )
 
 // runUI pipes input into a fresh UI and returns everything it printed.

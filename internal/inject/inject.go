@@ -21,11 +21,11 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/xscope0/xkvm-ios-injector/internal/deb"
-	"github.com/xscope0/xkvm-ios-injector/internal/extras"
-	"github.com/xscope0/xkvm-ios-injector/internal/fsutil"
-	"github.com/xscope0/xkvm-ios-injector/internal/log"
-	"github.com/xscope0/xkvm-ios-injector/internal/macho"
+	"github.com/blessed0x/xkvm-ios-injector/internal/deb"
+	"github.com/blessed0x/xkvm-ios-injector/internal/extras"
+	"github.com/blessed0x/xkvm-ios-injector/internal/fsutil"
+	"github.com/blessed0x/xkvm-ios-injector/internal/log"
+	"github.com/blessed0x/xkvm-ios-injector/internal/macho"
 )
 
 // Mode selects the hooking runtime used to satisfy substrate-style

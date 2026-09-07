@@ -25,7 +25,7 @@ It is a from-scratch Go rewrite that merges **pyzule-rw / cyan** (the
 actively-maintained Python tweak injector — its author famously asked for a
 rewrite in a compiled language) with the missing features of the **archived
 Azule** tool (repo-based fetching, App Store decrypt). The repo is
-`github.com/xscope0/xkvm-ios-injector`; the binary is `xkvm`.
+`github.com/blessed0x/xkvm-ios-injector`; the binary is `xkvm`.
 
 **Two surfaces, one engine.** The `xkvm` root command is the flag-driven CLI
 (for scripted/batch use and AI agents). `xkvm tui` (also bare `xkvm` when no
@@ -37,7 +37,7 @@ points — no separate code path, so the TUI can't drift from the CLI.
 
 | Fact | Value |
 |---|---|
-| Module path | `github.com/xscope0/xkvm-ios-injector` |
+| Module path | `github.com/blessed0x/xkvm-ios-injector` |
 | Language / Go version | Go 1.26.6 (go.mod; staticcheck + govulncheck pinned via the tool directive) |
 | Binary | `xkvm` (single static binary; builds darwin/linux/windows × arm64/amd64) |
 | CLI framework | `spf13/cobra` |
@@ -273,12 +273,12 @@ must follow the strip-edit-resign discipline (extract ents → remove sig → ed
 **HEAD is past `5e9f4d1`; read `git log` for the live list.**
 
 - **REPO SPLIT (2026-08-23, post-ride): the device subsystem now lives
-  standalone at `github.com/gwnodex-bit/idev`** (private; checkout:
+  standalone at `github.com/blessed0x/idev`** (private; checkout:
   `/Users/blessed/idev`) — `device/` library + `cmd/idev` CLI +
   `internal/log` ported verbatim with import rewrites, full test suite
   green, own Makefile/CI. xKVM's `internal/device` copy remains
   authoritative-for-xkvm until PHASE 2: flip xkvm to
-  `require github.com/gwnodex-bit/idev` + delete `internal/device` +
+  `require github.com/blessed0x/idev` + delete `internal/device` +
   repoint cli/tui imports. **Do NOT edit both copies for new features —
   land in idev first.**
 - Device-control parity batch: auto-managed iOS 17+ developer tunnels

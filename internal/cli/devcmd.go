@@ -15,8 +15,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/xscope0/xkvm-ios-injector/internal/device"
-	"github.com/xscope0/xkvm-ios-injector/internal/log"
+	"github.com/blessed0x/xkvm-ios-injector/internal/device"
+	"github.com/blessed0x/xkvm-ios-injector/internal/log"
 )
 
 // deviceHandler builds the device-control handler. A variable so tests can

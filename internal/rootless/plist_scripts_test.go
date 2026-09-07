@@ -10,8 +10,8 @@ import (
 
 	howett "howett.net/plist"
 
-	"github.com/xscope0/xkvm-ios-injector/internal/deb"
-	"github.com/xscope0/xkvm-ios-injector/internal/plist"
+	"github.com/blessed0x/xkvm-ios-injector/internal/deb"
+	"github.com/blessed0x/xkvm-ios-injector/internal/plist"
 )
 
 // buildPlistFixture builds a rootless deb (payload under var/jb) whose

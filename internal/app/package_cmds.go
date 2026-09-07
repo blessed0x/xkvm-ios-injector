@@ -6,12 +6,12 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/xscope0/xkvm-ios-injector/internal/artifact"
-	"github.com/xscope0/xkvm-ios-injector/internal/deb"
-	"github.com/xscope0/xkvm-ios-injector/internal/fsutil"
-	"github.com/xscope0/xkvm-ios-injector/internal/log"
-	"github.com/xscope0/xkvm-ios-injector/internal/plist"
-	"github.com/xscope0/xkvm-ios-injector/internal/rootless"
+	"github.com/blessed0x/xkvm-ios-injector/internal/artifact"
+	"github.com/blessed0x/xkvm-ios-injector/internal/deb"
+	"github.com/blessed0x/xkvm-ios-injector/internal/fsutil"
+	"github.com/blessed0x/xkvm-ios-injector/internal/log"
+	"github.com/blessed0x/xkvm-ios-injector/internal/plist"
+	"github.com/blessed0x/xkvm-ios-injector/internal/rootless"
 )
 
 // DebifyOptions configures `xkvm debify`: wrapping a tweak dylib (or a

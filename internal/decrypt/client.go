@@ -33,7 +33,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xscope0/xkvm-ios-injector/internal/plist"
+	"github.com/blessed0x/xkvm-ios-injector/internal/plist"
 )
 
 // userAgent matches PancakeStore's configurator UA. Apple keys server

@@ -8,11 +8,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xscope0/xkvm-ios-injector/internal/artifact"
-	"github.com/xscope0/xkvm-ios-injector/internal/ipa"
-	"github.com/xscope0/xkvm-ios-injector/internal/log"
-	"github.com/xscope0/xkvm-ios-injector/internal/macho"
-	"github.com/xscope0/xkvm-ios-injector/internal/testutil"
+	"github.com/blessed0x/xkvm-ios-injector/internal/artifact"
+	"github.com/blessed0x/xkvm-ios-injector/internal/ipa"
+	"github.com/blessed0x/xkvm-ios-injector/internal/log"
+	"github.com/blessed0x/xkvm-ios-injector/internal/macho"
+	"github.com/blessed0x/xkvm-ios-injector/internal/testutil"
 )
 
 const testInfoPlist = `<?xml version="1.0" encoding="UTF-8"?>

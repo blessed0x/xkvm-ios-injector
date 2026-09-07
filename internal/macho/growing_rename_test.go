@@ -3,7 +3,7 @@ package macho
 import (
 	"testing"
 
-	"github.com/xscope0/xkvm-ios-injector/internal/testutil"
+	"github.com/blessed0x/xkvm-ios-injector/internal/testutil"
 )
 
 // TestChangeDependencyGrowingRename is a regression test for a latent

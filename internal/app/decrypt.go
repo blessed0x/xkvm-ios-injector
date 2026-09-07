@@ -8,8 +8,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/xscope0/xkvm-ios-injector/internal/decrypt"
-	"github.com/xscope0/xkvm-ios-injector/internal/log"
+	"github.com/blessed0x/xkvm-ios-injector/internal/decrypt"
+	"github.com/blessed0x/xkvm-ios-injector/internal/log"
 )
 
 // DecryptOptions drives xkvm decrypt. AppID accepts a numeric App Store id,

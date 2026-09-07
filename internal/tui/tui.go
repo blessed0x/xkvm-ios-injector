@@ -24,13 +24,13 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/xscope0/xkvm-ios-injector/internal/app"
-	"github.com/xscope0/xkvm-ios-injector/internal/cyanfile"
-	"github.com/xscope0/xkvm-ios-injector/internal/decrypt"
-	"github.com/xscope0/xkvm-ios-injector/internal/device"
-	"github.com/xscope0/xkvm-ios-injector/internal/fetch"
-	"github.com/xscope0/xkvm-ios-injector/internal/log"
-	"github.com/xscope0/xkvm-ios-injector/internal/patch"
+	"github.com/blessed0x/xkvm-ios-injector/internal/app"
+	"github.com/blessed0x/xkvm-ios-injector/internal/cyanfile"
+	"github.com/blessed0x/xkvm-ios-injector/internal/decrypt"
+	"github.com/blessed0x/xkvm-ios-injector/internal/device"
+	"github.com/blessed0x/xkvm-ios-injector/internal/fetch"
+	"github.com/blessed0x/xkvm-ios-injector/internal/log"
+	"github.com/blessed0x/xkvm-ios-injector/internal/patch"
 )
 
 // UI holds the interactive session state.

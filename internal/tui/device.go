@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xscope0/xkvm-ios-injector/internal/device"
-	"github.com/xscope0/xkvm-ios-injector/internal/log"
+	"github.com/blessed0x/xkvm-ios-injector/internal/device"
+	"github.com/blessed0x/xkvm-ios-injector/internal/log"
 )
 
 // deviceOrHint resolves the target phone and surfaces any policy error

@@ -3,8 +3,8 @@ package patch
 import (
 	"path/filepath"
 
-	"github.com/xscope0/xkvm-ios-injector/internal/log"
-	"github.com/xscope0/xkvm-ios-injector/internal/plist"
+	"github.com/blessed0x/xkvm-ios-injector/internal/log"
+	"github.com/blessed0x/xkvm-ios-injector/internal/plist"
 )
 
 func init() {

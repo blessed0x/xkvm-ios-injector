@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xscope0/xkvm-ios-injector/internal/app"
+	"github.com/blessed0x/xkvm-ios-injector/internal/app"
 )
 
 // Color tokens are semantic keys, not raw codes: the actual escape

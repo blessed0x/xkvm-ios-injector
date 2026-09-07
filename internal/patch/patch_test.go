@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	gmacho "github.com/blacktop/go-macho"
-	"github.com/xscope0/xkvm-ios-injector/internal/plist"
-	"github.com/xscope0/xkvm-ios-injector/internal/testutil"
+	"github.com/blessed0x/xkvm-ios-injector/internal/plist"
+	"github.com/blessed0x/xkvm-ios-injector/internal/testutil"
 )
 
 func TestNames(t *testing.T) {

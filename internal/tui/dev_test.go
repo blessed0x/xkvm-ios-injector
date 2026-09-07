@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xscope0/xkvm-ios-injector/internal/device"
+	"github.com/blessed0x/xkvm-ios-injector/internal/device"
 )
 
 type stubDev struct {

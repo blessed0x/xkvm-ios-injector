@@ -12,11 +12,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/xscope0/xkvm-ios-injector/internal/app"
-	"github.com/xscope0/xkvm-ios-injector/internal/cyanfile"
-	"github.com/xscope0/xkvm-ios-injector/internal/log"
-	"github.com/xscope0/xkvm-ios-injector/internal/macho"
-	"github.com/xscope0/xkvm-ios-injector/internal/testutil"
+	"github.com/blessed0x/xkvm-ios-injector/internal/app"
+	"github.com/blessed0x/xkvm-ios-injector/internal/cyanfile"
+	"github.com/blessed0x/xkvm-ios-injector/internal/log"
+	"github.com/blessed0x/xkvm-ios-injector/internal/macho"
+	"github.com/blessed0x/xkvm-ios-injector/internal/testutil"
 )
 
 // runCapturesOptions returns a Runner that records the parsed options.
@@ -178,7 +178,7 @@ func TestRootUnknownSubcommandHintsReinstall(t *testing.T) {
 	if !strings.Contains(msg, `did you mean a subcommand? "tui" isn't one`) {
 		t.Errorf("hint missing; got:\n%s", msg)
 	}
-	if !strings.Contains(msg, "go install github.com/xscope0/xkvm-ios-injector/cmd/xkvm@main") {
+	if !strings.Contains(msg, "go install github.com/blessed0x/xkvm-ios-injector/cmd/xkvm@main") {
 		t.Errorf("reinstall command missing; got:\n%s", msg)
 	}
 	if *started {

@@ -2,7 +2,7 @@
 // injector (cyan + Azule heritage, rewritten in Go).
 package main
 
-import "github.com/xscope0/xkvm-ios-injector/internal/cli"
+import "github.com/blessed0x/xkvm-ios-injector/internal/cli"
 
 func main() {
 	cli.Main()
