@@ -17,9 +17,9 @@ Inject tweaks into apps · extract them back out · convert jailbreak packages b
 
 New here? Run `xkvm tui`. It asks the same questions the flags do, one at a time, and runs the exact same engine under the hood.
 
-[![CI](https://github.com/xscope0/xkvm-ios-injector/actions/workflows/ci.yml/badge.svg)](https://github.com/xscope0/xkvm-ios-injector/actions)
+[![CI](https://github.com/blessed0x/xkvm-ios-injector/actions/workflows/ci.yml/badge.svg)](https://github.com/blessed0x/xkvm-ios-injector/actions)
 [![Go](https://img.shields.io/badge/Go-1.26-blue)]()
-[![License: MIT](https://img.shields.io/github/license/xscope0/xkvm-ios-injector)](LICENSE)
+[![License: MIT](https://img.shields.io/github/license/blessed0x/xkvm-ios-injector)](LICENSE)
 
 </div>
 
@@ -73,9 +73,9 @@ xkvm check -i App-Tweaked.ipa                         # find missing files befor
 
 | OS | One-liner |
 |---|---|
-| **macOS / Linux** (Ubuntu, Arch, ...) | `curl -fsSL https://raw.githubusercontent.com/xscope0/xkvm-ios-injector/main/scripts/install.sh \| bash` |
-| **Windows** (PowerShell) | `irm https://raw.githubusercontent.com/xscope0/xkvm-ios-injector/main/scripts/install.ps1 \| iex` |
-| **Any OS with Go** | `go install github.com/xscope0/xkvm-ios-injector/cmd/xkvm@latest` |
+| **macOS / Linux** (Ubuntu, Arch, ...) | `curl -fsSL https://raw.githubusercontent.com/blessed0x/xkvm-ios-injector/main/scripts/install.sh \| bash` |
+| **Windows** (PowerShell) | `irm https://raw.githubusercontent.com/blessed0x/xkvm-ios-injector/main/scripts/install.ps1 \| iex` |
+| **Any OS with Go** | `go install github.com/blessed0x/xkvm-ios-injector/cmd/xkvm@latest` |
 
 The installers detect your OS and architecture, download the matching
 release asset, and put `xkvm` on your PATH. Before the first release ships,
@@ -86,7 +86,7 @@ on Apple Silicon with Homebrew).
 **From source** (requires [Go 1.26+](https://go.dev/dl/)):
 
 ```bash
-git clone https://github.com/xscope0/xkvm-ios-injector.git
+git clone https://github.com/blessed0x/xkvm-ios-injector.git
 cd xkvm-ios-injector
 make build          # produces ./bin/xkvm
 ```
