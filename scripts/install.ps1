@@ -3,7 +3,7 @@
 # user's PATH. Falls back to `go install` when no release exists yet.
 #
 # Usage (one line, from PowerShell):
-#   irm https://raw.githubusercontent.com/xscope0/xkvm-ios-injector/main/scripts/install.ps1 | iex
+#   irm https://raw.githubusercontent.com/blessed0x/xkvm-ios-injector/main/scripts/install.ps1 | iex
 #
 # Or with the script on disk:
 #   powershell -ExecutionPolicy Bypass -File install.ps1
@@ -40,7 +40,7 @@ function Show-XkvmIntro {
 }
 
 
-$Repo    = "xscope0/xkvm-ios-injector"
+$Repo    = "blessed0x/xkvm-ios-injector"
 $ApiUrl  = "https://api.github.com/repos/$Repo/releases/latest"
 $BinDir  = Join-Path $env:USERPROFILE ".local\bin"
 $BinPath = Join-Path $BinDir "xkvm.exe"
@@ -61,7 +61,7 @@ if ($null -eq $Release -or $null -eq $Release.tag_name) {
         Write-Host "xkvm: 'go' not found. Install Go (https://go.dev/dl/) then re-run, or wait for a release." -ForegroundColor Red
         exit 1
     }
-    go install "github.com/xscope0/xkvm-ios-injector/cmd/xkvm@latest"
+    go install "github.com/blessed0x/xkvm-ios-injector/cmd/xkvm@latest"
     Write-Host "xkvm: installed via 'go install'."
     exit 0
 }
