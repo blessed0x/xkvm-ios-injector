@@ -4,7 +4,7 @@
 # falls back to `go install` when no release exists yet (pre-release days).
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/xscope0/xkvm-ios-injector/main/scripts/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/blessed0x/xkvm-ios-injector/main/scripts/install.sh | bash
 #
 # Installs to ~/.local/bin by default (respect XKVM_PREFIX to override).
 set -euo pipefail
@@ -42,7 +42,7 @@ intro() {
 }
 
 
-REPO="xscope0/xkvm-ios-injector"
+REPO="blessed0x/xkvm-ios-injector"
 VERSION="${XKVM_VERSION:-latest}"
 
 # --- pick an install prefix -------------------------------------------------
@@ -83,7 +83,7 @@ if [ -z "$REL_JSON" ] || ! echo "$REL_JSON" | grep -q '"tag_name"'; then
     echo "xkvm: 'go' not found. Install Go (https://go.dev/dl/) then re-run, or wait for a release." >&2
     exit 1
   fi
-  go install "github.com/xscope0/xkvm-ios-injector/cmd/xkvm@latest"
+  go install "github.com/blessed0x/xkvm-ios-injector/cmd/xkvm@latest"
   echo "xkvm: installed via 'go install'."
   exit 0
 fi
@@ -96,7 +96,7 @@ URL="https://github.com/$REPO/releases/download/$TAG/$ASSET"
 echo "xkvm: fetching $TAG ($ASSET)"
 if ! curl -fsSL -o "$TMP/xkvm.tar.gz" "$URL"; then
   echo "xkvm: release $TAG has no $ASSET (maybe the release was made before this asset existed)." >&2
-  echo "xkvm: try again with a newer release, or install from source: go install github.com/xscope0/xkvm-ios-injector/cmd/xkvm@latest" >&2
+  echo "xkvm: try again with a newer release, or install from source: go install github.com/blessed0x/xkvm-ios-injector/cmd/xkvm@latest" >&2
   exit 1
 fi
 
