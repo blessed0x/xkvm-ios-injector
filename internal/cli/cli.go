@@ -1,0 +1,758 @@
+// Package cli wires the xkvm command line: flag definitions, help text and
+// subcommands (xkvm, xkvm cgen, ...). Flag semantics are cyan-compatible.
+package cli
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"strings"
+
+	"github.com/spf13/cobra"
+
+	"github.com/blessed0x/xkvm-ios-injector/internal/app"
+	"github.com/blessed0x/xkvm-ios-injector/internal/cyanfile"
+	"github.com/blessed0x/xkvm-ios-injector/internal/decrypt"
+	"github.com/blessed0x/xkvm-ios-injector/internal/device"
+	"github.com/blessed0x/xkvm-ios-injector/internal/fetch"
+	"github.com/blessed0x/xkvm-ios-injector/internal/log"
+	"github.com/blessed0x/xkvm-ios-injector/internal/patch"
+	"github.com/blessed0x/xkvm-ios-injector/internal/tui"
+)
+
+// Runner is the injectable pipeline entry point. Tests replace it with a
+// capture function; production wires it to app.Run.
+type Runner func(ctx context.Context, opts *app.Options) error
+
+// TUIStarter launches the interactive menu. Injectable so tests can stub it
+// (the real TUI reads os.Stdin, which blocks in test runs). Production wires
+// it to tui.New().Start.
+type TUIStarter func()
+
+// Main builds and executes the root command, mapping any error to a
+// non-zero exit. Device-control errors carry their own exit codes
+// (64-70); everything else exits 1.
+func Main() {
+	if err := NewRootCmd(app.Run, tui.New().Start).Execute(); err != nil {
+		log.Errorf("%v", err)
+		os.Exit(device.ExitCode(err))
+	}
+}
+
+// NewRootCmd returns the `xkvm` command with the full cyan-compatible flag
+// surface, plus the Azule-heritage long flags (implemented in M4/M5). The
+// tuiStarter is only used by the tui subcommand; pass nil in tests that never
+// invoke it.
+func NewRootCmd(run Runner, tuiStarter TUIStarter) *cobra.Command {
+	opts := &app.Options{}
+	var (
+		silent      bool
+		showVersion bool
+	)
+	// Declared before the RunE closure (which references it) so it is in
+	// scope; filled in below as flags are bound.
+	var patchFlags map[string]*bool
+
+	cmd := &cobra.Command{
+		Use:   "xkvm [flags] -i <app>",
+		Short: "iOS app modifier & tweak injector (cyan + Azule heritage, in Go)",
+		Long: `xkvm works with iOS apps. Give it an app (.ipa/.tipa/.app) and a tweak,
+and it puts the tweak inside, re-signs the result, and repacks it. It can
+also pull tweaks back out of an app, and convert tweak packages between
+the formats different jailbreaks use.
+
+Not sure where to start? Run 'xkvm' (or 'xkvm tui') for a menu that
+asks one question at a time. Or use the command line:
+
+  xkvm -i App.ipa -f MyTweak.dylib -o App-Tweaked.ipa   inject a tweak
+  xkvm extract -i App.ipa -o tweaks/                   pull tweaks out
+  xkvm rootless -i tweak.deb -o tweak-rootless.deb     convert a package
+  xkvm check -i App-Tweaked.ipa                        find missing files
+
+Flag names and semantics are cyan-compatible. All modification flags apply
+to the -i input; the result is written to -o, or overwrites the input.`,
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		// cyan's argparse uses nargs="+", so space-separated values after a
+		// single flag are legal there. pflag can only repeat flags, so any
+		// trailing positional args are folded into the last-specified array
+		// flag by collectTrailingArgs (below).
+		Args: cobra.ArbitraryArgs,
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			log.SetSilent(silent)
+			return nil
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if showVersion {
+				fmt.Fprintf(cmd.OutOrStdout(), "xkvm v%s\n", app.Version)
+				return nil
+			}
+			if opts.Input == "" {
+				// Manual check (cobra's MarkFlagRequired runs before RunE
+				// and would block --version). Matches cyan's argparse
+				// required=True for -i/--input.
+				if len(args) > 0 {
+					// A stale binary (or a typo) treats an unknown subcommand
+					// as a positional arg, then fails here with a confusing
+					// "input not set". Point at the real fix: reinstall.
+					return fmt.Errorf("required flag(s) \"input\" not set\n\n  did you mean a subcommand? %q isn't one. if you recently installed xkvm,\n  your copy may be out of date; reinstall with:\n\n    go install github.com/blessed0x/xkvm-ios-injector/cmd/xkvm@main\n\n  then run 'xkvm --help' to see the current commands", args[0])
+				}
+				if cmd.Flags().NFlag() == 0 {
+					// Bare `xkvm`: no input, no flags, no subcommand — open the
+					// friendly menu instead of failing with "input not set".
+					// A new user meeting xkvm for the first time should land in
+					// the menu, not on a flag error.
+					start := tuiStarter
+					if start == nil {
+						start = tui.New().Start
+					}
+					start()
+					return nil
+				}
+				return fmt.Errorf("required flag(s) \"input\" not set")
+			}
+			collectTrailingArgs(cmd, opts, args)
+			collectEnabledPatches(opts, patchFlags)
+			return run(cmd.Context(), opts)
+		},
+	}
+
+	f := cmd.Flags()
+	f.StringVarP(&opts.Input, "input", "i", "", "the app to be modified (.app/.ipa/.tipa)")
+	f.StringVarP(&opts.Output, "output", "o", "", "output path (.app/.ipa/.tipa); defaults to overwriting the input")
+	f.StringArrayVarP(&opts.Cyans, "cyan", "z", nil, ".cyan config file(s) to use (repeatable; values may be space-separated)")
+	f.StringArrayVarP(&opts.Files, "file", "f", nil, "tweak to inject / item to add to the bundle (repeatable; values may be space-separated)")
+	f.StringArrayVar(&opts.RootDylibs, "root-dylib", nil, "inject dylib at the app root with an @executable_path load command instead of Frameworks/@rpath. For dlopen-based tweaks like Regram that resolve resources relative to @executable_path (repeatable)")
+	f.StringVarP(&opts.Name, "name", "n", "", "modify the app's name")
+	f.StringVarP(&opts.Version, "app-version", "v", "", "modify the app's version")
+	f.StringVarP(&opts.BundleID, "bundle-id", "b", "", "modify the app's bundle id")
+	f.StringVarP(&opts.MinimumOS, "minimum-os", "m", "", "modify the app's minimum OS version")
+	f.StringVarP(&opts.Icon, "icon", "k", "", "modify the app's icon (image file)")
+	f.StringVarP(&opts.PlistMerge, "plist", "l", "", "a plist to merge with the app's Info.plist")
+	f.StringVarP(&opts.Entitlements, "entitlements", "x", "", "add or modify entitlements on the main binary")
+	f.BoolVarP(&opts.RemoveSupportedDevices, "remove-supported-devices", "u", false, "remove UISupportedDevices")
+	f.BoolVarP(&opts.NoWatch, "no-watch", "w", false, "remove all watch apps")
+	f.BoolVarP(&opts.EnableDocuments, "enable-documents", "d", false, "enable documents support")
+	f.BoolVarP(&opts.Fakesign, "fakesign", "s", false, "fakesign all binaries (AppSync/TrollStore)")
+	f.BoolVarP(&opts.Thin, "thin", "q", false, "thin all binaries to arm64")
+	f.BoolVarP(&opts.RemoveExtensions, "remove-extensions", "e", false, "remove all app extensions")
+	f.BoolVarP(&opts.RemoveEncrypted, "remove-encrypted", "g", false, "only remove encrypted app extensions")
+	f.IntVarP(&opts.Compress, "compress", "c", 6, "ipa compression level (0-9, default 6)")
+	f.BoolVar(&opts.IgnoreEncrypted, "ignore-encrypted", false, "skip the main binary encryption check")
+	f.BoolVar(&opts.Overwrite, "overwrite", false, "overwrite existing files without confirming")
+	f.BoolVar(&opts.Patch, "patch", false, "inject the bundled sideload dylib set (App Store/keychain repairs + bundled tweaks; implies --fakesign)")
+	f.BoolVar(&opts.ElleKit, "ellekit", false, "use the real ElleKit runtime: rewrite legacy hooking spellings to @rpath/ElleKit.framework/ElleKit and thin the framework to the app's architecture")
+	// One bool flag per registered compatibility patch (spec D10). The
+	// registry is stable-sorted, so flag order is deterministic.
+	patchFlags = make(map[string]*bool, len(patch.Names()))
+	for _, name := range patch.Names() {
+		b := new(bool)
+		patchFlags[name] = b
+		f.BoolVar(b, name, false, "apply the "+name+" compatibility patch")
+	}
+	f.BoolVar(&silent, "silent", false, "silence everything but errors")
+	// version is long-only so -v stays free for app-version.
+	f.BoolVar(&showVersion, "version", false, "print xkvm version and exit")
+	// Azule heritage — wired now, implemented in M4/M5.
+	f.StringArrayVar(&opts.Fetch, "fetch", nil, "fetch tweak(s) by bundle id via Canister/MobileAPT (repeatable; values may be space-separated)")
+	f.StringArrayVarP(&opts.APTSource, "apt-source", "A", nil, "extra APT repo URL(s) to fetch from (repeatable; values may be space-separated)")
+	f.BoolVar(&opts.NoRecurse, "no-recurse", false, "don't install fetched package dependencies")
+	f.StringArrayVar(&opts.Decrypt, "decrypt", nil, "iOS only: decrypt an App Store app (apple-id password; values may be space-separated)")
+	f.StringVarP(&opts.Country, "country", "C", "", "country code for ipatool / iTunes lookup")
+
+	cmd.AddCommand(newTUICmd(tuiStarter))
+	cmd.AddCommand(newCGenCmd())
+	cmd.AddCommand(newExtractCmd())
+	cmd.AddCommand(newCyanCheckCmd())
+	cmd.AddCommand(newCheckCmd())
+	cmd.AddCommand(newDebifyCmd())
+	cmd.AddCommand(newUndebCmd())
+	cmd.AddCommand(newRootlessCmd())
+	cmd.AddCommand(newRootfulCmd())
+	cmd.AddCommand(newRoothideCmd())
+	cmd.AddCommand(newCacheCmd())
+	cmd.AddCommand(newDecryptCmd())
+	cmd.AddCommand(newDeviceCmd())
+	return cmd
+}
+
+// collectEnabledPatches gathers the enabled per-patch flags into opts.Patches
+// in registry (sorted) order, so patch.Apply runs deterministically.
+func collectEnabledPatches(opts *app.Options, flags map[string]*bool) {
+	for _, name := range patch.Names() {
+		if b, ok := flags[name]; ok && *b {
+			opts.Patches = append(opts.Patches, name)
+		}
+	}
+}
+
+// collectTrailingArgs folds positional args (possible only because cyan's
+// nargs="+" flags accept space-separated values) into the last-specified
+// array flag. Priority order mirrors argparse's greedy "last flag wins"
+// semantics for the common single-array-flag invocations; with several array
+// flags the last one parsed is ambiguous in pflag, so this is a documented
+// approximation. Stray positional args therefore become -f values by default.
+func collectTrailingArgs(cmd *cobra.Command, opts *app.Options, args []string) {
+	if len(args) == 0 {
+		return
+	}
+	switch {
+	case cmd.Flags().Changed("fetch"):
+		opts.Fetch = append(opts.Fetch, args...)
+	case cmd.Flags().Changed("decrypt"):
+		opts.Decrypt = append(opts.Decrypt, args...)
+	case cmd.Flags().Changed("apt-source"):
+		opts.APTSource = append(opts.APTSource, args...)
+	case cmd.Flags().Changed("cyan"):
+		opts.Cyans = append(opts.Cyans, args...)
+	default:
+		opts.Files = append(opts.Files, args...)
+	}
+}
+
+// newTUICmd is the friendly menu mode: it drives the same internal/app
+// functions the flags do, but asks questions in plain words and animates
+// work with a block-art spinner. Zero dependencies; degrades to a plain
+// prompt when stdin is piped. The starter is injectable so tests can stub
+// out the os.Stdin read; production passes tui.New().Start.
+func newTUICmd(start TUIStarter) *cobra.Command {
+	return &cobra.Command{
+		Use:   "tui",
+		Short: "menu mode: asks questions in plain words, no flags to remember",
+		Long: `tui runs the same engine as the command line, but asks you one question
+at a time ("which app do you want to tweak?"), shows a spinner while it
+works, and prints what happened when it finishes.
+
+Use it when you are not sure which flags you need. Each menu screen
+shows the equivalent command, so it doubles as a reference.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if start == nil {
+				start = tui.New().Start
+			}
+			start()
+			return nil
+		},
+	}
+}
+
+// newCheckCmd is the merge-completeness gate: verify every bundle-relative
+// load-command dependency in an app/ipa resolves inside the bundle. Catches
+// the ffmpegkit-class gap — a tweak referencing @rpath/X.framework that the
+// app doesn't ship. Exit code 1 when any reference is unresolved.
+//
+// --fix turns the report into an auto-resolver: missing artifacts are located
+// (--fix-dir collections, .debs inside them, the fetch cache, then the repos
+// unless --no-fetch) and a fixed copy is written to -o.
+func newCheckCmd() *cobra.Command {
+	var (
+		input, output string
+		fix           bool
+		fixDirs       []string
+		yes, noFetch  bool
+	)
+	cmd := &cobra.Command{
+		Use:   "check -i <app|ipa|tipa> [--fix -o <out>]",
+		Short: "verify bundle-relative dependencies resolve (merge-completeness check)",
+		Long: `check scans every Mach-O in an app/ipa/tipa for two classes of
+unresolved bundle-relative reference:
+  1. load-command dependencies (@rpath/, @executable_path/, @loader_path/)
+     whose target is absent from the bundle, and
+  2. bare NAME.framework strings in non-main binaries: the runtime-dlopen
+     signature (e.g. RyukGram dlopening ffmpegkit.framework) whose framework
+     the app doesn't ship reachably.
+Frameworks in Frameworks/ and at the app root are reachable from any binary;
+a framework nested inside a .bundle is reachable only from binaries of the
+same tweak family. System frameworks and paths are ignored; dlopen findings
+are reported as suspected. Exit code is 1 when any reference is unresolved.
+
+--fix auto-resolves what it can: for each missing reference it searches the
+--fix-dir directories (and the .debs inside them), the fetch cache, then the
+repos by name (unless --no-fetch), places every found artifact where the
+check expects it, re-signs the bundle, re-runs the check, and writes the
+fixed copy to -o (default <input>-fixed.ipa). Tier-1 load-command gaps are
+fixed automatically; tier-2 dlopen findings ask for confirmation unless
+--yes is given (in a non-interactive shell they are left alone). The input
+is never modified. Exit code is 1 when anything remains unresolved.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if fix {
+				return app.CheckAndFix(input, output, fixDirs, app.FixOptions{
+					AllowFetch: !noFetch,
+					AutoYes:    yes,
+					Confirm:    ttyConfirm,
+				})
+			}
+			return app.CheckBundle(input)
+		},
+	}
+	f := cmd.Flags()
+	f.StringVarP(&input, "input", "i", "", "the app/ipa/tipa to check")
+	f.StringVarP(&output, "output", "o", "", "fixed output path (with --fix); default <input>-fixed.ipa")
+	f.BoolVar(&fix, "fix", false, "find and inject the missing artifacts into a fixed copy")
+	f.StringArrayVar(&fixDirs, "fix-dir", nil, "directory to search for missing artifacts (repeatable; .debs inside are unpacked and searched too)")
+	f.BoolVar(&yes, "yes", false, "with --fix: auto-confirm tier-2 (heuristic) injections")
+	f.BoolVar(&noFetch, "no-fetch", false, "with --fix: don't search the repos by name")
+	_ = cmd.MarkFlagRequired("input")
+	return cmd
+}
+
+// ttyConfirm is the interactive tier-2 gate for check --fix: it prompts on a
+// real terminal and refuses in a non-interactive shell (scripts/AI must pass
+// --yes to auto-inject heuristic matches).
+func ttyConfirm(name, artifact string) bool {
+	fi, err := os.Stdin.Stat()
+	if err != nil || fi.Mode()&os.ModeCharDevice == 0 {
+		return false
+	}
+	fmt.Fprintf(os.Stderr, "found %s (at %s) — inject it into the fixed app? [y/N] ", name, artifact)
+	var ans string
+	if _, err := fmt.Fscanln(os.Stdin, &ans); err != nil {
+		return false
+	}
+	return strings.EqualFold(ans, "y") || strings.EqualFold(ans, "yes")
+}
+
+// newCyanCheckCmd validates .cyan config file(s) without applying them:
+// payload/root_dylibs mismatches and everything else that would fail at apply
+// time. Exit code 1 on any error-level finding, 0 with warnings only.
+func newCyanCheckCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "cyan-check <file.cyan>...",
+		Short: "validate .cyan config file(s) before applying them",
+		Long: `cyan-check reads each .cyan archive (config.json + inject/ payloads) and
+reports problems without extracting anything to disk: root_dylibs entries
+with no matching inject/ payload, k/l/x file payloads the archive lacks,
+unsafe payload paths, and unknown patch names. Warnings cover unknown
+config keys (kept for forward compatibility) and odd value types. Exit
+code is 1 when any error-level finding exists, 0 when only warnings (or
+nothing) did.`,
+		Args: cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			knownPatches := map[string]bool{}
+			for _, n := range patch.Names() {
+				knownPatches[n] = true
+			}
+			failed := 0
+			for _, f := range args {
+				issues, err := cyanfile.Validate(f, knownPatches)
+				if err != nil {
+					log.Errorf("cyan-check %s: %v", f, err)
+					failed++
+					continue
+				}
+				log.Infof("cyan-check %s", f)
+				errs, warns := 0, 0
+				for _, is := range issues {
+					switch is.Level {
+					case cyanfile.IssueError:
+						errs++
+						log.Errorf("error: %s", is.Message)
+					default:
+						warns++
+						log.Warnf("warning: %s", is.Message)
+					}
+				}
+				if errs == 0 {
+					log.Infof("%d error(s), %d warning(s) — OK", errs, warns)
+				} else {
+					log.Infof("%d error(s), %d warning(s) — INVALID", errs, warns)
+					failed++
+				}
+			}
+			if failed > 0 {
+				return fmt.Errorf("cyan-check: %d file(s) with errors", failed)
+			}
+			return nil
+		},
+	}
+	return cmd
+}
+
+// newDebifyCmd wraps a tweak dylib (or payload directory) into a standard
+// MobileSubstrate .deb (Dylib-to-Deb-Converter format): DEBIAN/control +
+// Library/MobileSubstrate/DynamicLibraries/{name}.dylib + filter plist.
+func newDebifyCmd() *cobra.Command {
+	var (
+		input, output, name, version, maintainer, author, description, filter string
+		bundleIDs, resources, depends                                         []string
+	)
+	cmd := &cobra.Command{
+		Use:   "debify -i <tweak.dylib|dir> -o <out.deb>",
+		Short: "build a MobileSubstrate .deb from a dylib (or payload dir)",
+		Long: `debify wraps a tweak dylib into a standard rootful .deb, matching the
+Dylib-to-Deb-Converter format: the dylib lands in
+Library/MobileSubstrate/DynamicLibraries/ and an optional Filter/Bundles
+plist is generated from --bundle-id. An input directory is treated as a
+complete payload root and copied verbatim; --resource adds extra payload
+files as src:dest pairs. Depends defaults to mobilesubstrate; --depends
+replaces it. Use 'xkvm rootless' to convert the result.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if output == "" {
+				return fmt.Errorf("required flag(s) \"output\" not set")
+			}
+			return app.Debify(app.DebifyOptions{
+				Input:       input,
+				Output:      output,
+				Name:        name,
+				Version:     version,
+				Maintainer:  maintainer,
+				Author:      author,
+				Description: description,
+				BundleIDs:   bundleIDs,
+				Filter:      filter,
+				Resources:   resources,
+				Depends:     depends,
+			})
+		},
+	}
+	f := cmd.Flags()
+	f.StringVarP(&input, "input", "i", "", "the tweak .dylib or payload directory")
+	f.StringVarP(&output, "output", "o", "", "output .deb path")
+	f.StringVar(&name, "name", "", "package/display name (default: input basename)")
+	f.StringVar(&version, "version", "", "package version (default 1.0)")
+	f.StringVar(&maintainer, "maintainer", "", "Maintainer field (default xkvm)")
+	f.StringVar(&author, "author", "", "Author field (default xkvm)")
+	f.StringVar(&description, "description", "", "Description field")
+	f.StringArrayVar(&bundleIDs, "bundle-id", nil, "target app bundle id(s) for the Filter/Bundles plist (repeatable)")
+	f.StringVar(&filter, "filter", "", "exact filter plist to ship instead of a generated one")
+	f.StringArrayVar(&resources, "resource", nil, "extra payload file as src:dest (repeatable)")
+	f.StringArrayVar(&depends, "depends", nil, "Depends entr(ies); replaces the default mobilesubstrate (repeatable)")
+	_ = cmd.MarkFlagRequired("input")
+	_ = cmd.MarkFlagRequired("output")
+	return cmd
+}
+
+// newUndebCmd extracts a tweak .deb and dumps its injectable artifacts
+// (dylib/framework/bundle) with a placement manifest: the Forte (deb-to-dylib)
+// equivalent, tool-native.
+func newUndebCmd() *cobra.Command {
+	var input, output string
+	cmd := &cobra.Command{
+		Use:   "undeb -i <tweak.deb> -o <dir>",
+		Short: "extract tweak artifacts (dylibs, bundles) from a .deb",
+		Long: `undeb unpacks a tweak .deb and copies its injectable artifacts (dylibs,
+frameworks, bundles) into -o. It writes the same xkvm-manifest.json
+sidecar as 'xkvm extract', so re-injecting those files restores their
+original placements. This is the deb-to-dylib direction of the
+Dylib-to-Deb-Converter / Forte workflow.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return app.Undeb(input, output)
+		},
+	}
+	f := cmd.Flags()
+	f.StringVarP(&input, "input", "i", "", "the .deb to extract from")
+	f.StringVarP(&output, "output", "o", "", "directory to write artifacts to")
+	_ = cmd.MarkFlagRequired("input")
+	_ = cmd.MarkFlagRequired("output")
+	return cmd
+}
+
+// newRootlessCmd converts a rootful .deb to a rootless one: payload repacked
+// under var/jb, control edits (iphoneos-arm64 + the rootless runtime
+// dependency), Mach-O load-command + __cstring paths rewritten under /var/jb,
+// and script path tokens converted (rootless-patcher port). --xina selects
+// the Xinam1nePatcher pipeline (short
+// symlink-form byte seds, @rpath conventions) instead.
+func newRootlessCmd() *cobra.Command {
+	var input, output string
+	var thin, tweakinject, xina bool
+	cmd := &cobra.Command{
+		Use:   "rootless -i <rootful.deb> -o <rootless.deb> [--thin] [--tweakinject]",
+		Short: "convert a rootful .deb to rootless",
+		Long: `rootless converts a rootful jailbreak .deb to a rootless one (the
+rootless-patcher pipeline): the payload is repacked under var/jb, the
+control file gains iphoneos-arm64 and the rootless runtime dependency
+(cy+cpu.arm64v8 | oldabi-xina | oldabi), and Mach-O load-command dylib
+paths whose first component is a bootstrap root (/Library, /usr, ...) are
+rewritten under /var/jb honoring the ConversionRuleset blacklist. Every
+converted Mach-O is re-signed like Derootifier's ldid step: executables get
+the roothide platform entitlements merged with any they already carried,
+other Mach-Os get a plain ad-hoc signature (pure-Go, Apple-format valid).
+--thin thins every Mach-O to arm64 (best-effort). Runtime dlopen strings
+compiled into __TEXT are rewritten too, with growing strings relocated into
+a __PATCH_ROOTLESS segment. Scripts (DEBIAN control scripts plus any
+shebang payload file) get the same token-based path conversion upstream
+applies via RPScriptHandler: tokens are split on " \n\"={}" and converted
+under /var/jb per the ConversionRuleset, with a double-conversion guard.
+Plists are not yet rewritten: WarnFixedPaths flags surviving rootful paths
+in them. Already-rootless packages are rebuilt unchanged.
+
+--tweakinject applies the modern Dopamine/ellekit conventions (ported from
+Derootifier): DynamicLibraries moves to usr/lib/TweakInject, CydiaSubstrate
+deps become @rpath/libsubstrate.dylib (the ellekit substrate shim), install
+names become @rpath/<basename>, and the /usr/lib + /var/jb/usr/lib rpaths
+are added.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if xina {
+				return app.RootlessXina(input, output)
+			}
+			return app.Rootless(input, output, thin, tweakinject)
+		},
+	}
+	f := cmd.Flags()
+	f.StringVarP(&input, "input", "i", "", "the rootful .deb to convert")
+	f.StringVarP(&output, "output", "o", "", "output .deb path")
+	f.BoolVar(&thin, "thin", false, "thin every Mach-O to arm64 (best-effort)")
+	f.BoolVar(&tweakinject, "tweakinject", false, "emit the modern TweakInject layout + @rpath/libsubstrate.dylib shim (Derootifier conventions)")
+	f.BoolVar(&xina, "xina", false, "use the Xina-style pipeline (short symlink-form paths, Xinam1nePatcher port)")
+	_ = cmd.MarkFlagRequired("input")
+	_ = cmd.MarkFlagRequired("output")
+	return cmd
+}
+
+// newRootfulCmd converts a rootless .deb back to a rootful one: the var/jb
+// payload is hoisted to the package root, /var/jb load commands and string
+// paths plus the Xina short forms are rewritten to rootful paths, @rpath
+// substrate shims are undone, and the control edits are reversed — the
+// inverse of 'xkvm rootless' (and 'xkvm rootless --xina').
+func newRootfulCmd() *cobra.Command {
+	var input, output string
+	cmd := &cobra.Command{
+		Use:   "rootful -i <rootless.deb> -o <rootful.deb>",
+		Short: "convert a rootless .deb back to rootful",
+		Long: `rootful converts a rootless jailbreak .deb (var/jb payload) back to a
+rootful one (the reverse of 'xkvm rootless'). The var/jb payload is hoisted
+to the package root, the control file goes back to iphoneos-arm without
+the rootless runtime dependency (cy+cpu.arm64v8 | oldabi-xina | oldabi),
+and /var/jb load-command dependencies, install names, and LC_RPATH entries
+are rewritten to rootful paths. @rpath/libsubstrate.dylib shims become
+/Library/Frameworks/CydiaSubstrate.framework/CydiaSubstrate, @rpath/
+install names are resolved to the file's package path when the file ships
+in the package (otherwise left with a warning), and the Xina short forms
+(/var/LIY, /var/lib, /var/bin, /var/sh) in string tables and plists are
+restored. Every patched Mach-O is re-signed with its preserved
+entitlements. Already-rootful packages are skipped.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return app.Rootful(input, output)
+		},
+	}
+	f := cmd.Flags()
+	f.StringVarP(&input, "input", "i", "", "the rootless .deb to convert")
+	f.StringVarP(&output, "output", "o", "", "output .deb path")
+	_ = cmd.MarkFlagRequired("input")
+	_ = cmd.MarkFlagRequired("output")
+	return cmd
+}
+
+// newRoothideCmd converts a rootless .deb to a roothide-jailbreak one:
+// var/jb payload hoisted to the package root, system files under rootfs/,
+// /var/jb → @loader_path/.jbroot load-command and rpath rewrites, and
+// iphoneos-arm64e control edits (RootHidePatcher port; GPL semantics
+// reference only — see NOTICE).
+func newRoothideCmd() *cobra.Command {
+	var input, output string
+	var pkgmirror bool
+	var mode string
+	cmd := &cobra.Command{
+		Use:   "roothide -i <rootless.deb> -o <roothide.deb> [--pkgmirror] [--mode auto|dynamic]",
+		Short: "convert a rootless .deb to a roothide-jailbreak one",
+		Long: `roothide converts a rootless jailbreak .deb (var/jb payload) to a
+roothide-jailbreak package (the RootHidePatcher pipeline): the var/jb
+payload is hoisted to the package root, remaining system files move under
+rootfs/, every /var/jb/... load-command dependency and LC_RPATH is
+rewritten to @loader_path/.jbroot/..., the control file becomes
+iphoneos-arm64e, and preinst/prerm/postinst/postrm/extrainst_ scripts plus
+LaunchDaemons and libSandy plists get the same path translations. Every
+patched Mach-O is re-signed like upstream's ldid step: executables get the
+roothide platform entitlements merged with any they already carried, other
+Mach-Os get a plain ad-hoc signature (pure-Go, Apple-format valid).
+A fixed-paths warning reports surviving /var/jb strings in __cstring.
+
+--pkgmirror mirrors the package to var/mobile/Library/pkgmirror with the
+control dir renamed DEBIAN.<pkg> for roothide's package manager. --mode
+controls the Pre-Depends/version edits: default adds none; auto adds
+rootless-compat(>= 0.9); dynamic adds a ~roothide version suffix and a
+patches-<pkg>(= <ver>~roothide) Pre-Depends.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return app.Roothide(input, output, pkgmirror, mode)
+		},
+	}
+	f := cmd.Flags()
+	f.StringVarP(&input, "input", "i", "", "the rootless .deb to convert")
+	f.StringVarP(&output, "output", "o", "", "output .deb path")
+	f.BoolVar(&pkgmirror, "pkgmirror", false, "mirror the package to var/mobile/Library/pkgmirror")
+	f.StringVar(&mode, "mode", "", "roothide control edit mode: auto or dynamic (default: none)")
+	_ = cmd.MarkFlagRequired("input")
+	_ = cmd.MarkFlagRequired("output")
+	return cmd
+}
+
+// newExtractCmd dumps the injectable artifacts (dylib/framework/appex/bundle)
+// from an app bundle into an output directory.
+func newExtractCmd() *cobra.Command {
+	var input, output string
+	cmd := &cobra.Command{
+		Use:   "extract -i <app> -o <dir>",
+		Short: "extract tweaks (dylibs, frameworks, bundles, appex) from an app",
+		Long:  "extract unpacks an .ipa/.tipa (or reads an .app) and copies the injected tweak artifacts it contains into -o.",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return app.ExtractArtifacts(input, output)
+		},
+	}
+	f := cmd.Flags()
+	f.StringVarP(&input, "input", "i", "", "the app to extract from (.app/.ipa/.tipa)")
+	f.StringVarP(&output, "output", "o", "", "directory to write artifacts to")
+	_ = cmd.MarkFlagRequired("input")
+	_ = cmd.MarkFlagRequired("output")
+	return cmd
+}
+
+// newCGenCmd is the .cyan config generator (cyan/pyzule-rw cgen parity,
+// plus the xkvm --root-dylib extension).
+func newCGenCmd() *cobra.Command {
+	var (
+		output     string
+		files      []string
+		rootDylibs []string
+		name       string
+		fakesign   bool
+		ellekit    bool
+		patches    []string
+	)
+	cmd := &cobra.Command{
+		Use:   "cgen -o <out.cyan> [-f tweak ...] [--root-dylib dylib ...]",
+		Short: "generate a shareable .cyan config file",
+		Long: `cgen writes a .cyan config file (config.json + inject/ payloads) in
+the upstream cyan/pyzule-rw format, so you can reproduce an IPA patch
+later or share it. xkvm extension: --root-dylib marks an inject payload
+for the app-root @executable_path contract (dlopen-based tweaks like
+Regram).`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if output == "" {
+				return fmt.Errorf("required flag(s) \"output\" not set")
+			}
+			return cyanfile.Generate(cyanfile.GenerateOptions{
+				Output:     output,
+				Files:      files,
+				RootDylibs: rootDylibs,
+				Name:       name,
+				Fakesign:   fakesign,
+				ElleKit:    ellekit,
+				Patches:    patches,
+			})
+		},
+	}
+	f := cmd.Flags()
+	f.StringVarP(&output, "output", "o", "", "output .cyan file")
+	f.StringArrayVarP(&files, "file", "f", nil, "tweak to inject / item to add (repeatable; payloads ship in inject/)")
+	f.StringArrayVar(&rootDylibs, "root-dylib", nil, "mark an injected dylib for the app root @executable_path contract (must also be in -f; repeatable)")
+	f.StringVarP(&name, "name", "n", "", "app name to bake into the config")
+	f.BoolVarP(&fakesign, "fakesign", "s", false, "bake fakesign into the config")
+	f.BoolVar(&ellekit, "ellekit", false, "bake the ElleKit runtime into the config")
+	f.StringArrayVar(&patches, "patch", nil, "bake compatibility patch name(s) into the config (repeatable)")
+	_ = cmd.MarkFlagRequired("output")
+	return cmd
+}
+
+// newCacheCmd shows or clears the persistent fetch cache — the folder where
+// the smart dependency solver keeps downloaded tweak .debs so a repeat fetch
+// is served from disk instead of the network (auto-pruned at 7 days).
+func newCacheCmd() *cobra.Command {
+	var clear bool
+	cmd := &cobra.Command{
+		Use:   "cache [--clear]",
+		Short: "show or empty the fetch cache folder",
+		Long: `cache reports where fetched tweak .debs are kept (they're reused, so you
+don't download the same tweak twice) and how much space they take. Entries
+older than 7 days are pruned automatically on the next fetch. --clear
+removes every cached .deb.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if clear {
+				n, err := fetch.ClearCache()
+				if err != nil {
+					return err
+				}
+				log.Infof("cleared %d cached .deb(s)", n)
+				return nil
+			}
+			dir, debs, bytes, err := fetch.CacheUsage()
+			if err != nil {
+				return err
+			}
+			log.Infof("cache folder: %s", dir)
+			if debs == 0 {
+				log.Infof("cache is empty")
+				return nil
+			}
+			log.Infof("%d cached .deb(s), %s", debs, fetch.HumanBytes(bytes))
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&clear, "clear", false, "remove every cached .deb")
+	return cmd
+}
+
+// newDecryptCmd downloads an App Store app by Apple ID — the ipatool /
+// PancakeStore flow: sign in, resolve the app, download the IPA, and write
+// it out with its iTunesMetadata.plist + SC_Info/ sinf files for sideloading
+// on a device signed in with the same Apple ID.
+func newDecryptCmd() *cobra.Command {
+	var (
+		appleID, password, version, output string
+		logout                             bool
+	)
+	cmd := &cobra.Command{
+		Use:   "decrypt <app-id|app-store-url|bundle-id> [-o dir] [--apple-id ID --password PW]",
+		Short: "download an App Store app by Apple ID for tweaking",
+		Long: `decrypt signs into the iTunes Store and downloads an app's IPA the way
+ipatool and PancakeStore do. The app id can be the numeric id, an
+apps.apple.com link, or a bundle id (looked up online). The output IPA
+carries its iTunesMetadata.plist and SC_Info/ sinf files, so it installs
+on a device signed in with the same Apple ID. The binary itself stays
+FairPlay-encrypted — real Mach-O decryption needs a jailbroken device.
+The session is remembered after the first login; --logout forgets it.`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if logout {
+				if err := decrypt.Logout(); err != nil {
+					return err
+				}
+				log.Infof("signed out")
+				return nil
+			}
+			var appID string
+			if len(args) > 0 {
+				appID = args[0]
+			}
+			if appID == "" {
+				return fmt.Errorf("missing the app id, App Store URL, or bundle id")
+			}
+			path, err := app.RunDecrypt(cmd.Context(), app.DecryptOptions{
+				AppleID:     appleID,
+				Password:    password,
+				AppID:       appID,
+				Version:     version,
+				OutputDir:   output,
+				Interactive: stdinIsTerminal(),
+			})
+			if err != nil {
+				return err
+			}
+			log.Infof("done: %s", path)
+			return nil
+		},
+	}
+	f := cmd.Flags()
+	f.StringVar(&appleID, "apple-id", "", "Apple ID to sign in with (remembered after the first login)")
+	f.StringVar(&password, "password", "", "Apple ID password (omit to use the saved session)")
+	f.StringVarP(&output, "output", "o", "", "directory for the output .ipa (default: current dir or the saved one)")
+	f.StringVar(&version, "version", "", "external version id to download (default: latest)")
+	f.BoolVar(&logout, "logout", false, "forget the saved Apple ID session")
+	return cmd
+}
+
+// stdinIsTerminal reports whether stdin is an interactive terminal, used to
+// decide whether the CLI may prompt for credentials.
+func stdinIsTerminal() bool {
+	fi, err := os.Stdin.Stat()
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
+}

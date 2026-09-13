@@ -1,0 +1,20 @@
+# Build output
+/bin/
+
+# Reference clone of the upstream python tool (kept for porting reference)
+/upstream/
+
+# Local artifacts, root-anchored so nothing tracked matches these.
+/*.ipa
+/*.tipa
+/*.deb
+/*.app
+
+# Stray binary from a local `go build -o xkvm` — never commit build output.
+/xkvm
+
+# goreleaser output (local snapshot runs; release builds happen in CI).
+/dist/
+
+# macOS
+.DS_Store

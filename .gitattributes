@@ -1,0 +1,19 @@
+# Text files are stored and checked out with LF everywhere. Without this,
+# GitHub Actions Windows runners (core.autocrlf=true) check out LF text as
+# CRLF, which breaks the LF-anchored patch patterns.
+* text=auto eol=lf
+
+# Binary file types must never be line-normalized or filtered.
+*.deb binary
+*.dylib binary
+*.ipa binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.zip binary
+*.gz binary
+*.xz binary
+*.bz2 binary
+*.zst binary
+*.framework binary
+*.bin binary

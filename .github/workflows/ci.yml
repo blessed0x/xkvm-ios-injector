@@ -1,0 +1,22 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  # Style + dead-code + vulnerability gate: gofmt, go vet, staticcheck,
+  # govulncheck. Runs the same target the Makefile provides (make lint), so
+  # local and CI behavior cannot drift. staticcheck and govulncheck are
+  # version-pinned via the go.mod tool directive.
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26"
+      - name: Lint (gofmt + vet + staticcheck + govulncheck)
+        run: make lint
+
